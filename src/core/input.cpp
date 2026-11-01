@@ -17,10 +17,21 @@ namespace {
 // Offsets in game.dll, valid only for the verified build.
 constexpr uint32_t kSlotImpulseValue = 0x2d08e8;  // bound pointer to inp_impulse_value
 constexpr uint32_t kSlotLastDelta = 0x2d05f4;     // bound pointer to sys_get_lastdelta
-constexpr uint32_t kLookBegin = 0x13070;          // player look function
-constexpr uint32_t kLookEnd = 0x13580;
 constexpr uint32_t kGameState = 0x1e9d68;  // pointer to pointer to the game state
 constexpr size_t kAimScale = 0x70;         // float: 1.0, or lower while looking down a sight
+
+struct CodeRange {
+    uint32_t begin;
+    uint32_t end;
+};
+
+// The cameras that multiply the mouse by frame time. dead_visor reads the mouse too, but adds it
+// straight to its angles, so it doesn't change with frame rate.
+constexpr CodeRange kLookFunctions[] = {
+    {0x13070, 0x13580},  // fps_visor, on foot
+    {0x13a10, 0x13be0},  // ladder_visor
+    {0x14e10, 0x150d0},  // third_person_visor, the base of vehicle_visor
+};
 
 // Impulse ids from game.dll's impulse name table.
 constexpr int kImpulseMouseLeft = 0x6e;
@@ -510,13 +521,20 @@ float look_scale(bool horizontal) {
     return scale * zoom_scale();
 }
 
+bool in_look_function(uintptr_t offset) {
+    for (const CodeRange& range : kLookFunctions) {
+        if (offset >= range.begin && offset < range.end) return true;
+    }
+    return false;
+}
+
 float __cdecl hook_impulse_value(int id) {
     const float value = g_real_impulse_value(id);
     if (id < kImpulseMouseLeft || id > kImpulseMouseDown || value == 0.0f) return value;
 
     const auto offset =
         reinterpret_cast<uintptr_t>(_ReturnAddress()) - reinterpret_cast<uintptr_t>(g_game);
-    if (offset < kLookBegin || offset >= kLookEnd) return value;
+    if (!in_look_function(offset)) return value;
     return value * look_scale(id <= kImpulseMouseRight);
 }
 

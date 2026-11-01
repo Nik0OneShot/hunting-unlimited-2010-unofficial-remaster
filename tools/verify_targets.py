@@ -303,32 +303,72 @@ def main():
 
     print("--- input offsets in game.dll")
     input_constants = constants(source("input.cpp"))
-    begin, end = input_constants["kLookBegin"], input_constants["kLookEnd"]
-    code = game_dll.disasm(begin, end - begin)
     slot = game_dll.base + input_constants["kSlotImpulseValue"]
-    ids = []
-    for i, ins in enumerate(code):
-        if ins.mnemonic == "call" and f"0x{slot:x}" in ins.op_str:
-            # The argument push can sit several FPU instructions before the call.
-            for previous in reversed(code[max(0, i - 8):i]):
-                if previous.mnemonic == "call":
-                    break
-                if previous.mnemonic == "push" and previous.op_str.startswith("0x"):
-                    ids.append(int(previous.op_str, 0))
-                    break
-    report({0x6e, 0x6f, 0x70, 0x71} <= set(ids), "look function reads all four mouse impulses")
-    report(any(i.mnemonic == "sub" and i.op_str == "esp, 0x40" for i in code[:1]), "look function starts where expected")
-
-    # The caller must pass sys_get_lastdelta as the look function's argument.
-    caller = game_dll.disasm(0x137d4, 32)
     delta_slot = game_dll.base + input_constants["kSlotLastDelta"]
-    report(f"0x{delta_slot:x}" in caller[0].op_str, "look function is fed sys_get_lastdelta")
+    look_rate = 0.872665
+
+    def mouse_ids(code):
+        ids = []
+        for i, ins in enumerate(code):
+            if ins.mnemonic == "call" and f"0x{slot:x}" in ins.op_str:
+                # The argument push can sit several FPU instructions before the call.
+                for previous in reversed(code[max(0, i - 8):i]):
+                    if previous.mnemonic == "call":
+                        break
+                    if previous.mnemonic == "push" and previous.op_str.startswith("0x"):
+                        ids.append(int(previous.op_str, 0))
+                        break
+        return set(ids)
+
+    def uses_look_rate(code):
+        for ins in code:
+            found = re.search(r"\[0x([0-9a-f]+)\]", ins.op_str)
+            if found and ins.mnemonic == "fld":
+                at = int(found.group(1), 16) - game_dll.base
+                if 0 <= at < len(game_dll.image) - 4:
+                    value = struct.unpack_from("<f", game_dll.image, at)[0]
+                    if abs(value - look_rate) < 0.00001:
+                        return True
+        return False
+
+    # Where each look function's caller fetches the frame time to pass in.
+    feeds = {0x13070: 0x137d4, 0x13a10: 0x13de1, 0x14e10: 0x150d3}
+    ranges = re.findall(r"\{(0x[0-9a-f]+), (0x[0-9a-f]+)\},  // (\w+)", source("input.cpp"))
+    report(len(ranges) == len(feeds), "every look function is listed")
+    for start, stop, name in ranges:
+        begin, end = int(start, 16), int(stop, 16)
+        code = game_dll.disasm(begin, end - begin)
+        report({0x6e, 0x6f, 0x70, 0x71} <= mouse_ids(code), f"{name} reads all four mouse impulses")
+        report(code[0].mnemonic == "sub" and code[0].op_str.startswith("esp, "), f"{name} starts where expected")
+        tail = bytes(game_dll.image[begin:end]).rstrip(b"\xcc")
+        report(tail[-1] == 0xc3 or tail[-3] == 0xc2, f"{name} ends where expected")
+        report(uses_look_rate(code), f"{name} scales by the look rate")
+
+        # The caller must pass sys_get_lastdelta as the look function's argument.
+        caller = game_dll.disasm(feeds[begin], 32)
+        report(f"0x{delta_slot:x}" in caller[0].op_str, f"{name} is fed sys_get_lastdelta")
+        report(
+            caller[3].mnemonic == "fstp"
+            and caller[4].mnemonic == "call"
+            and int(caller[4].op_str, 0) == game_dll.base + begin,
+            f"that value goes straight into {name}",
+        )
+
+    # The ATV's camera is built on third_person_visor, and calls down to it.
     report(
-        caller[3].mnemonic == "fstp"
-        and caller[4].mnemonic == "call"
-        and int(caller[4].op_str, 0) == game_dll.base + begin,
-        "that value goes straight into the look function",
+        game_dll.disasm(0x1536b, 5)[0].op_str == hex(game_dll.base + 0x150d0),
+        "vehicle_visor uses third_person_visor's look function",
     )
+    report(
+        struct.unpack_from("<I", game_dll.image, 0x19c624)[0] == game_dll.base + 0x15360,
+        "that method is on vehicle_visor's vtable",
+    )
+
+    # dead_visor is left out because it adds the mouse straight to its angles.
+    dead = game_dll.disasm(0x119d0, 0x1a0)
+    report(0x6e in mouse_ids(dead), "dead_visor reads the mouse")
+    report(not uses_look_rate(dead), "and doesn't scale it by the look rate")
+    report(not any(f"0x{delta_slot:x}" in i.op_str for i in dead), "or by frame time")
 
     print(f"\n{failures} failure(s)")
     return 1 if failures else 0

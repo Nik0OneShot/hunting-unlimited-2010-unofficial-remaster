@@ -17,9 +17,6 @@ Still to confirm with longer play:
 - whether the crashes and hitching seen on the original return
 - whether terrain, grass or tree culling needs the wider FOV too
 - whether world-to-UI overlays follow the wider UI rect
-- aim speed outside walking: the frame rate fix covers the player look function at `game.dll+0x13070`,
-  but `+0x119d0`, `+0x13a10` and `+0x14e10` also read the mouse, so vehicles and other cameras may
-  still change speed with frame rate
 
 ## 2. Full player settings
 

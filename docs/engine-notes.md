@@ -90,8 +90,17 @@ function and the impulse is one of the four mouse look ids (`0x6e..0x71`), it sc
 `(1 / reference_hz) / delta`, which cancels the multiplication. Bindings, inversion and the in-game
 slider all keep working.
 
-Not changed: the camera function at `game.dll+0x119d0`, which also reads those impulses. Its purpose
-and whether it needs the same fix are still unknown.
+Cameras are the `visor` classes, and four of them read the mouse:
+
+| Class | Look function | Multiplies by frame time |
+| --- | --- | --- |
+| `fps_visor`, on foot | `+0x13070` | Yes |
+| `ladder_visor` | `+0x13a10` | Yes |
+| `third_person_visor`, the base of `vehicle_visor` | `+0x14e10` | Yes |
+| `dead_visor` | `+0x119d0` | No, it adds the mouse straight to its angles |
+
+The first three share the same formula and are all fed `sys_get_lastdelta`, so the same scaling fixes them, and
+one sensitivity applies to all of them. `dead_visor` is left alone.
 
 ## Field of view
 
