@@ -4,6 +4,7 @@
 # Build output and runtime data
 /build/
 /dist/
+/release/
 /logs/
 *.log
 *.dmp

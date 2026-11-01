@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(longshot LANGUAGES CXX)
+project(longshot VERSION 0.1.0 LANGUAGES CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "The game is 32-bit, so Longshot must be too. Configure with: cmake -A Win32")
@@ -16,7 +16,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${OUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OUT})
 
 add_compile_options(/W4 /utf-8 /permissive- /EHsc)
-add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _WIN32_WINNT=0x0A00)
+add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _WIN32_WINNT=0x0A00
+    LONGSHOT_VERSION="${PROJECT_VERSION}")
 # The launcher stub is located by address, so incremental-link thunks must not exist.
 add_link_options(/INCREMENTAL:NO)
 

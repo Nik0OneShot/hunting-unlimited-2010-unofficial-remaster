@@ -109,7 +109,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
 // loaded and before any of its code has run.
 extern "C" __declspec(dllexport) void __cdecl longshot_init() {
     log_open();
-    logf("longshot starting");
+    logf("longshot %s starting", LONGSHOT_VERSION);
     crash_install();
     config_load();
     enable_dpi_awareness();
@@ -153,6 +153,9 @@ extern "C" __declspec(dllexport) int __cdecl longshot_test_iat() {
 }
 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_fov(float fov, float aspect) {
+    // These checks are about the Hor+ maths, so they can't depend on the player's own settings.
+    g_cfg.fov_mode = FovMode::HorPlus;
+    g_cfg.fov_scale = 1.0f;
     return view_adjust_fov(fov, aspect);
 }
 

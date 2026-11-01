@@ -1,15 +1,15 @@
-# Longshot
+# Hunting Unlimited 2010 Unofficial Remaster
 
-A modern runtime for **Hunting Unlimited 2010** (SCS Software, 2009). It runs your own copy
-of the game with proper ultrawide support, high refresh rates and correct mouse aim.
+Longshot is a modern runtime for **Hunting Unlimited 2010** (SCS Software, 2009). It runs your own
+copy of the game with proper ultrawide support, high refresh rates and correct mouse aim.
 
 Longshot does not include any game files, and it needs a legitimately owned copy to run.
 It never changes your game folder: fixes are applied in memory while the game runs.
 
 Not affiliated with or endorsed by SCS Software or THQ.
 
-> **Status: early.** The game runs and plays at a locked 165 FPS at 3440x1440 on the first test
-> PC, but it hasn't been tried on a wide range of hardware. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: early.** It plays well at a locked 165 FPS at 3440x1440, but so far it has only been
+> tested on that one PC. Please [report what you find](#reporting-a-problem).
 
 ## What it fixes
 
@@ -35,8 +35,12 @@ Not affiliated with or endorsed by SCS Software or THQ.
 
 ## Using it
 
+You need Windows 10 version 1803 or later, and the Steam version of the game. Other versions may
+run, but the fixes that depend on the exact game build turn themselves off.
+
 1. Install Hunting Unlimited 2010 through Steam.
-2. Put the Longshot files in any folder, and run `longshot.exe`.
+2. Download the zip from [Releases](../../releases), and unzip it to any folder.
+3. Run `longshot.exe`.
 
 It finds the Steam install by itself. If it can't, set `game_dir` under `[paths]` in
 `longshot.ini`. The main settings are in the game, under Options, then Longshot. All of them are
@@ -48,8 +52,12 @@ Steam, add `longshot.exe` as a non-Steam game.
 F12 saves the game's own screenshot to `Documents\Hunting Unlimited 2010\screenshots`. You can
 pick a different key in the game's controls menu, and Longshot will leave it alone.
 
-Your security software may warn about `longshot.exe`, because it loads code into another
-process, and that is also what some malware does. The full source is in this repository.
+Windows or your security software may warn about `longshot.exe`, because it isn't signed and it
+loads code into another process, which is also what some malware does. The full source is in this
+repository, so you can read it or build it yourself.
+
+To remove Longshot, delete its folder. Your game stays as it was, though the game saves any change
+to your key bindings in its own profile.
 
 ## Troubleshooting
 
@@ -72,10 +80,20 @@ reg add "HKCU\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f
 reg add "HKCU\Software\Microsoft\GameBar" /v UseNexusForGameBarEnabled /t REG_DWORD /d 0 /f
 ```
 
+## Known gaps
+
+- Only tested on one PC so far, with the Steam build.
+- The Steam overlay hasn't been tested with Longshot, so Steam's own screenshots may not work.
+- Menu lists glide with the mouse wheel, but not when dragging the scrollbar, and rows can briefly
+  overlap nearby UI as they move.
+- Anything the game draws over the world, like markers, hasn't been checked on wide screens.
+
 ## Reporting a problem
 
-After a run, attach everything from the `logs` folder: `longshot.log`, `engine.log`,
-`launcher.log`, and `crash.dmp` if there is one.
+[Open an issue](../../issues), and attach everything from the `logs` folder: `longshot.log`,
+`engine.log`, `launcher.log`, and `crash.dmp` if there is one. A screenshot helps with anything
+visual. The logs show file paths, which can include your Windows user name, and a crash dump holds
+a copy of the game's memory, so look through them first if that matters to you.
 
 ## Building
 
@@ -105,7 +123,14 @@ python tools/check_layouts.py "<game folder>"
 
 The first injects into a stand-in program and writes `dist/logs/selftest.txt`. The second confirms
 every offset and symbol Longshot relies on against a game install. The third rewrites the install's
-real layout files for each screen shape and HUD setting, and confirms the results are sound.
+real layout files for each screen shape and HUD setting, and confirms the results are sound. The
+two Python tools need `pip install pefile capstone`.
+
+To make a release zip, build first, then:
+
+```bash
+python tools/package.py
+```
 
 ## How it works
 
