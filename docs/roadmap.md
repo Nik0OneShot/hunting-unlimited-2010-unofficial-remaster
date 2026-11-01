@@ -26,11 +26,8 @@ Done:
 - Scope and binocular masks, flashes and eyelids that reach the screen edges
 - Pausing a hunt while the game is in the background, off by default (`pause_in_background`)
 - Menu backgrounds that fill the screen
-
-Still to do:
-
-- An in-game settings screen, instead of only `longshot.ini`
-- Sensitivity as cm/360 from a mouse DPI setting
+- An in-game settings tab, under Options
+- Turn speed as cm/360, from a mouse DPI setting
 
 ## 3. Performance and stability
 

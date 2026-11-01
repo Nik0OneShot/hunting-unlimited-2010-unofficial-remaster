@@ -307,6 +307,24 @@ The side bars now have to be cleared before the UI draws, or the clear would era
 whole UI with one `ui_process` call in its frame at `game.dll+0x102df0`, after the world, so Longshot clears there.
 If a frame reaches the swap without it, the bars are cleared at the swap instead.
 
+### Options menu
+
+`ui.handler.menu.options` has its vtable at `game.dll+0x1ac7e8`, with `handle` at `+0x6c` and the method that runs
+when the window opens at `+0x80`. `handle(view, action, param)` gets a click as action 2, with the control's id at
+`view + 0xdc`. Ids 1, 2 and 3 are Apply, Cancel and Defaults, and 10, 11 and 12 show the tab windows held at
+`+0xbc`, tracked by the index at `+0xc8`. Tabs share the `menu_tab` window group. Defaults goes to whichever tab
+that index names.
+
+Longshot's tab isn't a window. Its button and rows go in the `moptions.esc` layout, inside the options window, so
+every click on them reaches that one handler. Longshot hooks both vtable entries, and hides the game's current tab
+when its own is chosen. A view's `layer` is its own, not inherited from its group, and the mouse goes to the highest
+layer under it, so the rows need a layer above the window's frames, which are on 1. Rows are cycle buttons, look 26, set through the `value` definition at `+0x1e7128`, whose
+setter is at `+0x34`. A setter takes the view object, the definition, an index, and the text.
+
+Changes wait for Apply, which writes them to `longshot.ini` and reloads it, so anything read from the config each
+time takes effect at once. A value edited by hand that isn't one of a row's choices is shown as it is, and only
+replaced if the player clicks that row.
+
 ### Lists
 
 UI components are in `game.dll`. Each has a descriptor with its name, then its size at `+0x14` and factory

@@ -521,6 +521,12 @@ float look_scale(bool horizontal) {
         if (delta < 0.00025) delta = 0.00025;
         if (delta > 0.1) delta = 0.1;
         scale *= static_cast<float>((1.0 / g_cfg.reference_hz) / delta);
+
+        // A turn distance needs a steady speed to mean anything, so it only applies here.
+        if (g_cfg.cm_per_360 > 0.0f && g_mouse_sensitivity) {
+            scale *= input_turn_scale(g_cfg.cm_per_360, g_cfg.mouse_dpi, g_mouse_sensitivity(),
+                                      g_cfg.reference_hz);
+        }
     }
     return scale * zoom_scale();
 }
@@ -554,6 +560,15 @@ void input_rawmouse_read(long* dx, long* dy) {
 long input_rawmouse_events() { return g_raw.event_count(); }
 
 bool input_is_zoomed() { return read_aim_scale() < 0.999f; }
+
+float input_turn_scale(float cm_per_360, int dpi, float slider, float reference_hz) {
+    constexpr float kCmPerInch = 2.54f;
+    constexpr float kFullTurn = 6.2831853f;
+    const float counts = cm_per_360 / kCmPerInch * static_cast<float>(dpi);
+    const float wanted = kFullTurn / counts;
+    const float current = slider * kLookRate / reference_hz;
+    return current > 0.0f ? wanted / current : 1.0f;
+}
 
 int input_test_wheel() {
     WheelPacer pacer;

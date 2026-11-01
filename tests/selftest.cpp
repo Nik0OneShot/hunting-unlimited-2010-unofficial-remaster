@@ -28,6 +28,22 @@ void near_check(const char* name, float actual, float expected) {
 
 using LayoutFn = int(__cdecl*)(const char*, const char*, float, int, char*, int);
 using PauseFn = int(__cdecl*)(bool*, bool, bool, bool);
+using TurnFn = float(__cdecl*)(float, int, float, float);
+
+void turn_checks(TurnFn turn) {
+    // One count should turn the view by this much, however the slider is set: a full turn in
+    // radians, over the counts in 30 cm at 800 DPI.
+    const float wanted = 6.2831853f / (30.0f / 2.54f * 800.0f);
+    for (const float slider : {0.165f, 0.5f, 2.0f}) {
+        const float now = slider * 0.872665f / 240.0f;
+        const float result = now * turn(30.0f, 800, slider, 240.0f);
+        check("a 30 cm turn doesn't depend on the slider", fabsf(result - wanted) < 0.000001f);
+    }
+    const float half = turn(15.0f, 800, 0.5f, 240.0f) / turn(30.0f, 800, 0.5f, 240.0f);
+    near_check("half the distance is twice the speed", half, 2.0f);
+    const float dpi = turn(30.0f, 1600, 0.5f, 240.0f) / turn(30.0f, 800, 0.5f, 240.0f);
+    near_check("twice the DPI needs half the speed", dpi, 0.5f);
+}
 
 void pause_checks(PauseFn step) {
     bool ours = false;
@@ -189,6 +205,17 @@ void layout_checks(LayoutFn rewrite) {
     check("menu: the window stops fitting itself", strstr(out, "\"fitting\" : \"false\"") != nullptr);
     check("menu: nothing to tint here", strstr(out, "top.mat") == nullptr);
 
+    const char options[] =
+        "estruct {\n\tclient {\n\t\tentities {\n\t\t\tentity \"ui.window\" {\n\t\t\t\tevalues {\n"
+        "\"coords\" : \"0 0 1024 768\"\n}\nentities {\nentity \"ui.comp.group\" {\nevalues {\n"
+        "\"coords\" : \"38 306 330 450\"\n}\nentities {\nentity \"ui.comp.common.button\" {\n"
+        "evalues {\n\"coords\" : \"38 306 330 338\"\n\"name\" : \"controls\"\n}\n}\n}\n}\n}\n}\n}\n}\n}\n";
+    check("the settings tab goes in on any screen",
+          rewrite("/ui/moptions.esc", options, 4.0f / 3.0f, kEdges, out, sizeof(out)) > 0);
+    check("settings: the tab button is there", strstr(out, "\"value\" : \"LONGSHOT\"") != nullptr);
+    check("settings: the page is there", strstr(out, "\"id\" : \"900\"") != nullptr);
+    check("settings: so are its rows", strstr(out, "\"id\" : \"1001\"") != nullptr);
+
     const char bindings[] =
         "def commands {\n\tdef f10 {\n\t\tcommand:\"screenshot\"\n\t}\n\tdef f11 {\n\t\tcommand:\"bugreport\"\n\t}\n}\n";
     check("screenshot key moves on any screen",
@@ -281,9 +308,10 @@ int main() {
         GetProcAddress(core, "longshot_test_glide_add"));
     auto test_layout = reinterpret_cast<LayoutFn>(GetProcAddress(core, "longshot_test_layout"));
     auto test_pause = reinterpret_cast<PauseFn>(GetProcAddress(core, "longshot_test_pause"));
+    auto test_turn = reinterpret_cast<TurnFn>(GetProcAddress(core, "longshot_test_turn"));
     const bool exports = test_iat && test_fov && test_raw && read_raw && count_raw && test_ui &&
                          test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
-                         test_pause;
+                         test_pause && test_turn;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -319,6 +347,7 @@ int main() {
     near_check("list glide reverses cleanly", test_glide_add(-20.0f, 30.0f, 30.0f), 10.0f);
 
     pause_checks(test_pause);
+    turn_checks(test_turn);
     layout_checks(test_layout);
     wchar_t folder[MAX_PATH];
     if (GetEnvironmentVariableW(L"LONGSHOT_LAYOUT_DIR", folder, MAX_PATH)) {

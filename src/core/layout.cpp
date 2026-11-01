@@ -34,6 +34,8 @@ constexpr int kMenuTintLayer = -12;
 // The player's own key bindings.
 constexpr char kControls[] = "home/controls.def";
 
+constexpr char kOptions[] = "ui/moptions.esc";
+
 // Group ids in ghud.esc.
 constexpr int kHudGame = 5;
 constexpr int kHudPhoto = 6;
@@ -431,6 +433,15 @@ void fix_menu(EscFile& esc, bool tinted, const Area& area) {
     add_menu_side(esc, static_cast<int>(kLayoutWidth), area.screen_right + kBleed, tinted);
 }
 
+// The Longshot tab goes in with the game's own tab buttons, and its page goes straight in the
+// options window, so the options handler sees everything that happens on it.
+void add_settings(EscFile& esc) {
+    const int controls = esc.find_by_name("controls");
+    if (controls < 0) return;
+    esc.add_child(esc.entity(controls).parent, settings_tab_entity());
+    esc.add_child(0, settings_page_entity());
+}
+
 std::string fix_lid_template(std::string text, const Area& area) {
     char width[32];
     snprintf(width, sizeof(width), "width=%d", lid_half_width(area));
@@ -521,7 +532,10 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
                            HudLayout hud) {
     const std::string name = normalised(path);
     if (name == kControls) return move_screenshot_key(original);
-    if (aspect <= kBaseAspect + 0.01f) return std::string();
+
+    const bool wide = aspect > kBaseAspect + 0.01f;
+    const bool options = name == kOptions && settings_available();
+    if (!wide && !options) return std::string();
     const Area area = area_for(aspect, hud);
 
     if (name == "def/ui/txt.def") {
@@ -531,6 +545,9 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
 
     EscFile esc(original);
     if (esc.count() == 0 || esc.entity(0).type != "ui.window") return std::string();
+    if (options) add_settings(esc);
+    if (!wide) return esc.text();
+
     if (is_scope(name)) fix_scope(esc, area);
     else if (name == "ui/gbinoc.esc") fix_binoculars(esc, area);
     else if (name == "ui/geyes.esc") fix_eyes(esc, area);

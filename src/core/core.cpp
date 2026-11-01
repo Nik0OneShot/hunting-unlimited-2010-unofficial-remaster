@@ -62,6 +62,7 @@ void on_module_loaded(HMODULE mod, const char* path) {
         input_attach_game(mod, verified);
         menu_attach_game(mod, verified);
         view_attach_game(mod, verified);
+        settings_attach_game(mod, verified);
     }
 }
 
@@ -166,6 +167,11 @@ extern "C" __declspec(dllexport) float __cdecl longshot_test_zoom(float current,
 }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_wheel() { return input_test_wheel(); }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_turn(float cm, int dpi, float slider,
+                                                                  float reference_hz) {
+    return input_turn_scale(cm, dpi, slider, reference_hz);
+}
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_pause(bool* ours, bool in_hunt,
                                                                  bool focused, bool game_paused) {

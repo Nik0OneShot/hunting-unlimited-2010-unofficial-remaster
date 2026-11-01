@@ -138,6 +138,28 @@ def check_flash(after, aspect, label):
     report(at[0] <= left and at[2] >= right, f"{label}: flash covers the screen")
 
 
+def check_settings_page(after, page, label):
+    tab = by_id(after, 13)
+    report(tab["parent"] is by_id(after, 10)["parent"], f"{label}: the tab sits with the game's tabs")
+    report(tab["values"].get("button_type") == by_id(after, 10)["values"].get("button_type"),
+           f"{label}: the tab works like the game's tabs")
+    buttons = [e for e in page if e["values"].get("look") == "26"]
+    ids = [e["values"].get("id") for e in buttons]
+    report(len(buttons) >= 5 and len(set(ids)) == len(ids), f"{label}: every setting has its own id")
+    report(not {"1", "2", "3", "10", "11", "12", "13"} & set(ids), f"{label}: no id clashes with a tab")
+    used = [e["values"].get("id") for e in after if e["values"].get("id") and e not in page]
+    report(not set(ids) & set(used), f"{label}: no id clashes with the options window")
+    frames = [int(e["values"].get("layer", 0)) for e in after if e["type"] == "ui.comp.common.frame"]
+    for entity in page:
+        at = coords(entity)
+        if entity is tab:
+            continue
+        report(int(entity["values"].get("layer", 0)) > max(frames),
+               f"{label}: {entity['values'].get('value')} is above the frames, so it gets the mouse")
+        report(at[1] >= 69 and at[3] <= 673, f"{label}: {entity['values'].get('value')} fits in the panel")
+        report(at[0] >= 206 and at[2] <= 986, f"{label}: {entity['values'].get('value')} fits the columns")
+
+
 def check_menu(before, after, aspect, original, label):
     left, right = screen(aspect)
     window = after[0]
@@ -148,7 +170,12 @@ def check_menu(before, after, aspect, original, label):
     added = [e for e in after if e["values"].get("layer") in ("-13", "-12")]
     tinted = "top.mat" in original
     report(len(added) == (4 if tinted else 2), f"{label}: the right number of panels")
-    kept = [e for e in after if e not in added]
+    page = []
+    if any(e["values"].get("id") == "900" for e in after):
+        page = inside(after, by_id(after, 900)) + [by_id(after, 13)]
+        check_settings_page(after, page, label)
+    ours = {id(e) for e in added + page}
+    kept = [e for e in after if id(e) not in ours]
     report([coords(e) for e in kept] == [coords(e) for e in before], f"{label}: everything else stays")
 
     for entity in added:

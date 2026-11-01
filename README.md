@@ -31,7 +31,7 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | Scope zoom jumps between levels and loses fast wheel notches | Smooth zoom, and every notch counts |
 | The first intro screen can't be skipped, and only Esc skips the rest | Any key or click skips the whole intro |
 | Menu lists jump a row at a time | Lists glide when scrolled |
-| Sensitivity is limited to the in-game slider | Exact, separate X and Y values |
+| Sensitivity is limited to the in-game slider | Exact, separate X and Y values, or a turn speed in cm/360 |
 
 ## Using it
 
@@ -39,8 +39,8 @@ Not affiliated with or endorsed by SCS Software or THQ.
 2. Put the Longshot files in any folder, and run `longshot.exe`.
 
 It finds the Steam install by itself. If it can't, set `game_dir` under `[paths]` in
-`longshot.ini`. All settings are in that file, created on first run, and each is explained
-there.
+`longshot.ini`. The main settings are in the game, under Options, then Longshot. All of them are
+in that file, created on first run, and each is explained there.
 
 Longshot starts the game directly, so Steam won't show the game as running. To launch it from
 Steam, add `longshot.exe` as a non-Steam game.

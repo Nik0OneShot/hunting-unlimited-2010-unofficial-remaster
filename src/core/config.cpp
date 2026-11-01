@@ -39,6 +39,18 @@ float positive(float value, float fallback) { return value > 0.0f ? value : fall
 
 }  // namespace
 
+std::string config_read(const wchar_t* section, const wchar_t* key, const char* fallback) {
+    char text[64];
+    read_str(section, key, text, sizeof(text));
+    return text[0] ? text : fallback;
+}
+
+void config_write(const wchar_t* section, const wchar_t* key, const char* value) {
+    wchar_t wide[64];
+    MultiByteToWideChar(CP_UTF8, 0, value, -1, wide, 64);
+    WritePrivateProfileStringW(section, key, wide, g_ini.c_str());
+}
+
 void config_load() {
     g_ini = root_dir() + L"\\longshot.ini";
 
@@ -60,6 +72,7 @@ void config_load() {
     read_str(L"view", L"hud_layout", text, sizeof(text));
     if (!_stricmp(text, "16_9")) g_cfg.hud_layout = HudLayout::Wide169;
     else if (!_stricmp(text, "4_3")) g_cfg.hud_layout = HudLayout::Center43;
+    else if (!_stricmp(text, "edges")) g_cfg.hud_layout = HudLayout::Edges;
 
     g_cfg.raw_input = read_bool(L"mouse", L"raw_input", g_cfg.raw_input);
     g_cfg.fps_independent = read_bool(L"mouse", L"fps_independent", g_cfg.fps_independent);
@@ -70,6 +83,10 @@ void config_load() {
     read_str(L"mouse", L"zoom_mode", text, sizeof(text));
     if (!_stricmp(text, "stock")) g_cfg.zoom_mode = ZoomMode::Stock;
     else if (!_stricmp(text, "off")) g_cfg.zoom_mode = ZoomMode::Off;
+    else if (!_stricmp(text, "proportional")) g_cfg.zoom_mode = ZoomMode::Proportional;
+    g_cfg.cm_per_360 = read_float(L"mouse", L"cm_per_360", g_cfg.cm_per_360);
+    g_cfg.mouse_dpi = read_int(L"mouse", L"mouse_dpi", g_cfg.mouse_dpi);
+    if (g_cfg.mouse_dpi <= 0) g_cfg.mouse_dpi = 800;
 
     g_cfg.high_res_timer = read_bool(L"timing", L"high_res_timer", g_cfg.high_res_timer);
     g_cfg.skip_intro = read_bool(L"game", L"skip_intro", g_cfg.skip_intro);
@@ -83,9 +100,10 @@ void config_load() {
          static_cast<int>(g_cfg.fov_mode), g_cfg.fov_scale, g_cfg.zoom_smoothing_ms,
          g_cfg.menu_scroll_smoothing_ms, static_cast<int>(g_cfg.ui_layout),
          static_cast<int>(g_cfg.hud_layout), g_cfg.skip_intro);
-    logf("config: raw=%d fps_independent=%d ref_hz=%.1f sens=%.4f/%.4f zoom_mode=%d",
+    logf("config: raw=%d fps_independent=%d ref_hz=%.1f sens=%.4f/%.4f zoom_mode=%d cm_per_360=%.1f "
+         "dpi=%d",
          g_cfg.raw_input, g_cfg.fps_independent, g_cfg.reference_hz, g_cfg.sensitivity_x,
-         g_cfg.sensitivity_y, static_cast<int>(g_cfg.zoom_mode));
+         g_cfg.sensitivity_y, static_cast<int>(g_cfg.zoom_mode), g_cfg.cm_per_360, g_cfg.mouse_dpi);
     logf("config: high_res_timer=%d pause_in_background=%d", g_cfg.high_res_timer,
          g_cfg.pause_in_background);
 }

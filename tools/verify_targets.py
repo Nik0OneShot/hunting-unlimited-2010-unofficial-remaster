@@ -148,6 +148,61 @@ def main():
         call = shared.disasm(caller, 5)[0]
         report(int(call.op_str, 0) == shared.base + 0x31a60, f"{kind} are read with decipher_file")
 
+    print("--- options menu")
+    settings = constants(source("settings.cpp"))
+    game_code = bins["game.dll"]
+    table = settings["kOptionsVtable"]
+    def slot(offset):
+        return struct.unpack_from("<I", game_code.image, table + offset)[0] - game_code.base
+    handle = slot(settings["kMethodHandle"])
+    report(handle == 0x36170, "the options vtable holds its event handler")
+    report(slot(settings["kMethodOpened"]) == 0x36c30, "and the method that runs when it opens")
+    name_at = bytes(game_code.image).find(b"ui.handler.menu.options\0")
+    descriptor = bytes(game_code.image).find(struct.pack("<I", game_code.base + name_at))
+    factory = struct.unpack_from("<I", game_code.image, descriptor + 0x18)[0] - game_code.base
+    report(
+        any(f"0x{game_code.base + table:x}" in i.op_str for i in game_code.disasm(factory, 0x50)),
+        "that vtable belongs to ui.handler.menu.options",
+    )
+    code = game_code.disasm(handle, 0x60)
+    report(any(i.op_str == f"ecx, dword ptr [edi + {settings['kViewId']:#x}]" for i in code), "a control's id is where expected")
+    report(any(i.mnemonic == "cmp" and i.op_str == "ebp, 2" for i in code), "clicks arrive as kActionClicked")
+    report(any(i.mnemonic == "cmp" and i.op_str == "eax, 0xb" for i in code), "the handler stops at id 12, leaving 13 free")
+    switch = game_code.disasm(0x3620d, 0x28)
+    report(
+        any(i.op_str == f"dword ptr [esi + {settings['kHandlerCurrentTab']:#x}], 0" for i in switch)
+        and any(i.op_str == f"esi, dword ptr [esi + {settings['kHandlerTabs']:#x}]" for i in switch),
+        "tabs are where expected",
+    )
+    calls = [i.op_str for i in switch if i.mnemonic == "call"]
+    report(
+        calls[:2] == [hex(game_code.base + settings["kHolderLock"]), hex(game_code.base + settings["kHolderUnlock"])],
+        "tab holders are read with kHolderLock and kHolderUnlock",
+    )
+    report(
+        any(i.op_str == f"edi, dword ptr [eax + {settings['kHandlerWindow']:#x}]" for i in switch),
+        "a tab's window is where expected",
+    )
+    # The sound tab sets its cycle buttons the same way.
+    sound_code = game_code.disasm(0x53c30, 0x30)
+    definition = game_code.base + settings["kButtonValueDef"]
+    setter = definition + settings["kValueDefSet"]
+    report(any(i.op_str == hex(definition) for i in sound_code), "the sound tab uses that value definition")
+    report(any(f"0x{setter:x}" in i.op_str for i in sound_code), "and calls its setter")
+    names_of = {e.name: e.address for e in shared.pe.DIRECTORY_ENTRY_EXPORT.symbols}
+    group_show = names_of[b"?show@ui_group_t@prism@@UAE_N_N@Z"]
+    group_table = 0x3e158
+    report(
+        struct.unpack_from("<I", shared.image, group_table + settings["kViewShow"])[0] == shared.base + group_show,
+        "a group's show method is where expected",
+    )
+    report(b"?ui_whide@prism@@YAXPAVc_item_t@1@@Z" in names_of, "p3shared exports ui_whide")
+    find_child = game_code.disasm(settings["kFindChild"], 16)
+    report(
+        any(i.op_str == f"eax, dword ptr [ebx + {settings['kViewId']:#x}]" for i in find_child),
+        "kFindChild compares that same id",
+    )
+
     print("--- keyboard")
     input_source = constants(source("input.cpp"))
     level = input_source["kKeyboardLevel"]

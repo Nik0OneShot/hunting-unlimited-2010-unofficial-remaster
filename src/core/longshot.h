@@ -32,6 +32,8 @@ struct Config {
     float sensitivity_x = 1.0f;
     float sensitivity_y = 1.0f;
     ZoomMode zoom_mode = ZoomMode::Proportional;
+    float cm_per_360 = 0.0f;
+    int mouse_dpi = 800;
 
     bool high_res_timer = true;
 
@@ -62,6 +64,8 @@ void logf(const char* fmt, ...);
 
 // config.cpp
 void config_load();
+std::string config_read(const wchar_t* section, const wchar_t* key, const char* fallback);
+void config_write(const wchar_t* section, const wchar_t* key, const char* value);
 
 // patch.cpp
 // Redirects one import of `mod`. Returns false when the module does not import it.
@@ -97,12 +101,22 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
 // sound.cpp
 void sound_attach_ds8(HMODULE ds8, bool verified);
 
+// settings.cpp
+void settings_attach_game(HMODULE game, bool verified);
+// False on an unknown build, where the options menu can't be extended.
+bool settings_available();
+// The Longshot tab button, and the page it shows, as layout text for the options menu.
+std::string settings_tab_entity();
+std::string settings_page_entity();
+
 // display.cpp
 void display_resolve_mode();
 void display_install(HMODULE exe);
 void display_attach_gl(HMODULE gl);
 // Clears the side bars just before the UI draws, so the UI can draw over them.
 void display_before_ui();
+// Picks up display settings that changed while the game was running.
+void display_settings_changed();
 
 // view.cpp
 void view_attach_game(HMODULE game, bool verified);
@@ -126,6 +140,8 @@ void input_game_ready();
 void input_set_fov(float game_fov_degrees);
 // True while looking through a scope, binoculars or iron sights.
 bool input_is_zoomed();
+// What to multiply aim speed by so that a turn takes `cm_per_360`, whatever the in-game slider says.
+float input_turn_scale(float cm_per_360, int dpi, float slider, float reference_hz);
 int input_test_wheel();
 bool input_rawmouse_start();
 void input_rawmouse_read(long* dx, long* dy);

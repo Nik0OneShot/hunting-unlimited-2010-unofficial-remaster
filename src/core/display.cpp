@@ -118,14 +118,14 @@ class FrameLimiter {
             LARGE_INTEGER value;
             QueryPerformanceFrequency(&value);
             freq_ = value.QuadPart;
-            interval_ = freq_ / g_cfg.fps_cap;
             timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                             TIMER_ALL_ACCESS);
         }
+        const LONGLONG interval = freq_ / g_cfg.fps_cap;
 
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
-        const LONGLONG target = next_ + interval_;
+        const LONGLONG target = next_ + interval;
         LONGLONG remaining = target - now.QuadPart;
 
         // Sleep through most of the wait, then spin for accuracy.
@@ -142,12 +142,11 @@ class FrameLimiter {
         } while (now.QuadPart < target);
 
         // After a slow frame, restart the cadence instead of rushing to catch up.
-        next_ = now.QuadPart - target > interval_ ? now.QuadPart : target;
+        next_ = now.QuadPart - target > interval ? now.QuadPart : target;
     }
 
    private:
     LONGLONG freq_ = 0;
-    LONGLONG interval_ = 0;
     LONGLONG next_ = 0;
     HANDLE timer_ = nullptr;
 };
@@ -361,6 +360,8 @@ HWND WINAPI hook_create_window(DWORD ex_style, LPCSTR cls, LPCSTR title, DWORD s
 }
 
 }  // namespace
+
+void display_settings_changed() { apply_swap_interval(); }
 
 void display_before_ui() {
     clear_side_bars(view_take_bar_width());
