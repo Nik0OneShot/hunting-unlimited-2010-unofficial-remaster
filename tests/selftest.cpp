@@ -111,6 +111,29 @@ const char kScopeLayout[] = R"(estruct {
 }
 )";
 
+const char kMenuLayout[] = R"(estruct {
+	client {
+		entities {
+			entity "ui.window" {
+				evalues {
+					"clip_children" : "false"
+					"coords" : "0 0 1024 768"
+					"fitting" : "true"
+				}
+				entities {
+					entity "ui.comp.text" {
+						evalues {
+							"text" : "<img src=/material/ui/ui_static_back.mat xscale=stretch yscale=stretch>"
+							"coords" : "0 0 1024 768"
+						}
+					}
+				}
+			}
+		}
+	}
+}
+)";
+
 bool has_coords(const char* text, const char* coords) {
     return strstr(text, (std::string("\"coords\" : \"") + coords + "\"").c_str()) != nullptr;
 }
@@ -151,6 +174,20 @@ void layout_checks(LayoutFn rewrite) {
     check("scope: bar on the left", has_coords(out, "-408 0 2 768"));
     check("scope: bar on the right", has_coords(out, "1022 0 1432 768"));
     check("scope: bars are solid black", strstr(out, "color=FF000000") != nullptr);
+
+    check("a menu without the background is left alone",
+          rewrite("/ui/mcontrols.esc", kScopeLayout, kUltrawide, kEdges, out, sizeof(out)) == 0);
+    check("menu rewritten",
+          rewrite("/ui/moptions.esc", kMenuLayout, kUltrawide, kEdges, out, sizeof(out)) > 0);
+    check("menu: panel on the left", has_coords(out, "-408 0 0 768"));
+    check("menu: panel on the right", has_coords(out, "1024 0 1432 768"));
+    check("menu: the left panel reflects the background",
+          strstr(out, "left=0.3984 right=0.0000") != nullptr);
+    check("menu: the right panel reflects it too",
+          strstr(out, "left=1.0000 right=0.6016") != nullptr);
+    check("menu: the original background stays", has_coords(out, "0 0 1024 768"));
+    check("menu: the window stops fitting itself", strstr(out, "\"fitting\" : \"false\"") != nullptr);
+    check("menu: nothing to tint here", strstr(out, "top.mat") == nullptr);
 }
 
 // tools/check_layouts.py extracts the real files and reads the results back. Each line of

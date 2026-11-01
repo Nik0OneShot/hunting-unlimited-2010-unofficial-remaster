@@ -156,6 +156,7 @@ FrameStats g_stats;
 FrameLimiter g_limiter;
 bool g_presented = false;
 bool g_clipped = false;
+bool g_bars_cleared = false;
 
 FARPROC opengl_proc(const char* name) {
     HMODULE gl = GetModuleHandleW(L"opengl32.dll");
@@ -199,8 +200,8 @@ GlClear load_gl_clear() {
     return gl;
 }
 
-// Menus only draw inside the UI area, and the engine never clears the frame, so the bars would
-// show stale frames and the scratch area where it renders environment maps.
+// The engine never clears the frame, so screens that don't reach the bars would show stale frames
+// there, and the scratch area where it renders environment maps.
 void clear_side_bars(int bar_width) {
     static const GlClear gl = load_gl_clear();
     if (bar_width <= 0 || !gl.ready()) return;
@@ -277,7 +278,8 @@ BOOL present(SwapBuffersFn real, HDC dc) {
     }
     drop_topmost_once_focused();
     view_per_frame();
-    clear_side_bars(view_take_bar_width());
+    if (!g_bars_cleared) clear_side_bars(view_take_bar_width());
+    g_bars_cleared = false;
     update_cursor_clip();
     view_update_background_pause();
     if (g_main_window && !game_has_focus()) Sleep(kBackgroundSleepMs);
@@ -359,6 +361,11 @@ HWND WINAPI hook_create_window(DWORD ex_style, LPCSTR cls, LPCSTR title, DWORD s
 }
 
 }  // namespace
+
+void display_before_ui() {
+    clear_side_bars(view_take_bar_width());
+    g_bars_cleared = true;
+}
 
 bool game_has_focus() {
     HWND foreground = GetForegroundWindow();

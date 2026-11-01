@@ -119,6 +119,7 @@ def main():
         ("gl.dll", "kernel32.dll", "GetProcAddress"),
         ("di8.dll", "dinput8.dll", "DirectInput8Create"),
         ("game.dll", "p3shared.dll", names["kUiInit"]),
+        ("game.dll", "p3shared.dll", names["kUiProcess"]),
         ("game.dll", "p3core.dll", names["kSetFov"]),
         ("game.dll", "p3core.dll", names["kProjection"]),
         ("game.dll", "p3shared.dll", names["kUiRef2View"]),
@@ -227,6 +228,17 @@ def main():
     report(any(f"0x{table:x}" in i.op_str for i in writes), "ui.comp.common.list uses that vtable")
 
     print("--- what the layouts have to respect in game.dll")
+    # The side bars are cleared just before this, so it has to come after the world, once a frame.
+    process_slot = game_dll.imports[("p3shared.dll", names["kUiProcess"])]
+    process_calls = [
+        i for i in game_dll.disasm(0x102df0, 0x400)
+        if i.mnemonic == "call" and f"0x{process_slot:x}" in i.op_str
+    ]
+    report(len(process_calls) == 1, "the frame draws the UI once")
+    report(
+        bytes(game_dll.image).count(struct.pack("<I", process_slot)) == 1,
+        "and nothing else draws it",
+    )
     # The equipment bar's slide picks its direction from where the bar sits against 0 and 1024.
     reference_slot = game_dll.imports[("p3shared.dll", names["kUiReferenceMode"])]
     report(

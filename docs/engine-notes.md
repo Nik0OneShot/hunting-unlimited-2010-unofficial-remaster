@@ -240,7 +240,7 @@ the plain reference size, for example at `+0xabb0`, so anything using them may n
 
 The engine never clears the colour buffer, since the world or a UI background always covers it. It also
 renders environment cube map faces into the back buffer's bottom-left corner, then copies them out. With a
-centred UI, both show in the side bars during menus, so Longshot clears the bars just before each swap.
+centred UI, both show in the side bars during menus, so Longshot clears the bars each frame.
 
 The world filling the screen isn't enough to tell a hunt from a menu. The menu map starts during the last
 intro screen and draws full-screen behind the black 4:3 splash, then the main menu moves it into a panel.
@@ -280,6 +280,17 @@ images of a fixed width side by side. Those are the only uses of `width=514`. Th
 along with the rect, or they sit at its left end.
 
 `ui/xfader.esc` isn't used by anything. `gscore`, `gmap` and `gpause` stay inside the 4:3 area.
+
+Menu backgrounds are `ui_static_back.mat`, a leather texture stretched over the 1024 wide layout. Most menus
+draw it as one full rect, and `mmain`, `mtroom` and `manimaldb` draw it as four tiles around the 3D panel. A dark
+layer in `rgb_bck` goes over it, and that layer's `top.mat` and `bottom.mat` images have a ragged edge. So
+Longshot adds side panels to the window, with both reflected at the layout's edges using `left` and `right`.
+Reflecting means the texture joins with no seam and keeps its scale. Those windows have to drop `fitting`, or the
+panels would widen the rect that `move_to` goes by.
+
+The side bars now have to be cleared before the UI draws, or the clear would erase those panels. The game draws the
+whole UI with one `ui_process` call in its frame at `game.dll+0x102df0`, after the world, so Longshot clears there.
+If a frame reaches the swap without it, the bars are cleared at the swap instead.
 
 ### Lists
 

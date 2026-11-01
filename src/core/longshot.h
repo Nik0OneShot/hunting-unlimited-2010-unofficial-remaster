@@ -101,6 +101,8 @@ void sound_attach_ds8(HMODULE ds8, bool verified);
 void display_resolve_mode();
 void display_install(HMODULE exe);
 void display_attach_gl(HMODULE gl);
+// Clears the side bars just before the UI draws, so the UI can draw over them.
+void display_before_ui();
 
 // view.cpp
 void view_attach_game(HMODULE game, bool verified);

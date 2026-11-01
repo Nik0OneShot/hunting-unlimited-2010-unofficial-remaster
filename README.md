@@ -18,7 +18,7 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | Aim speed changes with frame rate, because mouse movement is multiplied by frame time | Aim speed stays the same at any frame rate |
 | The game clock ticks in whole milliseconds, which causes stutter at high refresh rates | Sub-millisecond clock |
 | Wide screens crop the top and bottom of the view | Proper Hor+ field of view |
-| Menus and HUD are stretched on wide screens | Correct proportions, with menus centred |
+| Menus and HUD are stretched on wide screens | Correct proportions, with menus centred and their backgrounds filling the sides |
 | The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |
 | Scopes and fades only cover the middle of a wide screen | Scopes, binoculars, flashes and eyelids reach the screen edges |
 | Fullscreen changes the display mode and blocks alt-tab | Borderless fullscreen |

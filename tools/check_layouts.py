@@ -138,6 +138,37 @@ def check_flash(after, aspect, label):
     report(at[0] <= left and at[2] >= right, f"{label}: flash covers the screen")
 
 
+def check_menu(before, after, aspect, original, label):
+    left, right = screen(aspect)
+    window = after[0]
+    report(coords(window) == coords(before[0]), f"{label}: the window keeps its rect")
+    report(window["values"].get("clip_children") == "false", f"{label}: the window stops clipping")
+    report(window["values"].get("fitting") == "false", f"{label}: the window stops fitting itself")
+
+    added = [e for e in after if e["values"].get("layer") in ("-13", "-12")]
+    tinted = "top.mat" in original
+    report(len(added) == (4 if tinted else 2), f"{label}: the right number of panels")
+    kept = [e for e in after if e not in added]
+    report([coords(e) for e in kept] == [coords(e) for e in before], f"{label}: everything else stays")
+
+    for entity in added:
+        at = coords(entity)
+        text = entity["values"]["text"]
+        width = at[2] - at[0]
+        report(at[1] == 0 and at[3] == 768, f"{label}: panels fill the height")
+        report(at[2] == 0 and at[0] <= left or at[0] == 1024 and at[2] >= right,
+               f"{label}: panels run from the layout edge to the screen edge")
+        reach = min(width / 1024, 1)
+        ranges = {(float(a), float(b)) for a, b in re.findall(r"left=([\d.]+) right=([\d.]+)", text)}
+        wanted = (reach, 0.0) if at[2] == 0 else (1.0, 1 - reach)
+        report(len(ranges) == 1 and all(abs(x - y) < 0.0002 for x, y in zip(next(iter(ranges)), wanted)),
+               f"{label}: panels reflect the image at that edge")
+        if entity["values"]["layer"] == "-12":
+            report({int(x) for x in re.findall(r"width=(\d+)", text)} == {width}, f"{label}: tint fills it")
+            heights = [int(x) for x in re.findall(r"height=(\d+)", text)]
+            report(sum(heights) == 768, f"{label}: tint covers the full height")
+
+
 def is_strip(entity):
     groups = {"5", "6", "11"}
     text = entity["values"].get("text", "")
@@ -206,9 +237,17 @@ def main():
 
     with zipfile.ZipFile(game / "base.scs") as archive, tempfile.TemporaryDirectory() as folder:
         work = Path(folder)
+        menus = [
+            name for name in archive.namelist()
+            if re.fullmatch(r"ui/(m\w*|sload)\.esc", name) and b"ui_static_back.mat" in archive.read(name)
+        ]
+        plain = [
+            name for name in archive.namelist()
+            if re.fullmatch(r"ui/m\w*\.esc", name) and name not in menus
+        ]
         sources = {}
         lines = []
-        for index, path in enumerate(LAYOUTS + [TEMPLATES]):
+        for index, path in enumerate(LAYOUTS + menus + plain + [TEMPLATES]):
             name = f"file{index}"
             data = archive.read(path)
             sources[path] = (name, data.decode("latin-1"))
@@ -229,7 +268,9 @@ def main():
         for aspect_name, aspect in ASPECTS.items():
             for hud, hud_name in HUDS.items():
                 label = f"{aspect_name} {hud_name}"
-                for path in LAYOUTS:
+                for path in plain:
+                    report(not rewritten(path, aspect_name, hud), f"{label}: {path} left alone")
+                for path in LAYOUTS + menus:
                     text = rewritten(path, aspect_name, hud)
                     report(bool(text), f"{label}: {path} rewritten")
                     if not text:
@@ -245,6 +286,8 @@ def main():
                         check_eyes(after, rewritten(TEMPLATES, aspect_name, hud), aspect, file_label)
                     elif "gflash" in path:
                         check_flash(after, aspect, file_label)
+                    elif path in menus:
+                        check_menu(before, after, aspect, sources[path][1], file_label)
                     else:
                         check_hud(before, after, aspect, hud, file_label)
                     checked += 1

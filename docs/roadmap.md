@@ -25,10 +25,10 @@ Done:
 - HUD at the screen edges, in a centred 16:9 area, or in a centred 4:3 area (`hud_layout`)
 - Scope and binocular masks, flashes and eyelids that reach the screen edges
 - Pausing a hunt while the game is in the background, off by default (`pause_in_background`)
+- Menu backgrounds that fill the screen
 
 Still to do:
 
-- Menu backgrounds that fill the screen
 - An in-game settings screen, instead of only `longshot.ini`
 - Sensitivity as cm/360 from a mouse DPI setting
 

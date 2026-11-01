@@ -1,5 +1,6 @@
 #include "longshot.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,11 @@ constexpr float kHud169Width = kLayoutHeight * 16.0f / 9.0f;
 
 // Enough overlap to hide any seam against the masks, and to cover the screen edge.
 constexpr int kBleed = 2;
+
+// The menu background, and two layers below everything the menus draw themselves.
+constexpr char kMenuBackground[] = "ui_static_back.mat";
+constexpr int kMenuBackLayer = -13;
+constexpr int kMenuTintLayer = -12;
 
 // Group ids in ghud.esc.
 constexpr int kHudGame = 5;
@@ -137,10 +143,19 @@ public:
         }
     }
 
-    void add_value(int index, const char* key, const char* value) {
-        const int line = entities_[index].values_line;
-        if (line < 0) return;
-        lines_[line] += std::string("\r\n\"") + key + "\" : \"" + value + "\"";
+    void set_value(int index, const char* key, const char* value) {
+        const int first = entities_[index].values_line;
+        if (first < 0) return;
+        const std::string wanted = std::string("\"") + key + "\"";
+        for (int i = first + 1; i < static_cast<int>(lines_.size()); ++i) {
+            const std::string line = trimmed(lines_[i]);
+            if (line == "}") break;
+            if (line.rfind(wanted, 0) == 0) {
+                replace_value(i, value);
+                return;
+            }
+        }
+        lines_[first] += "\r\n" + wanted + " : \"" + value + "\"";
     }
 
     void add_child(int index, const std::string& entity_text) {
@@ -287,7 +302,7 @@ void replace_all(std::string* text, const std::string& from, const std::string& 
 // carry that on to the screen edges. The window itself has to stay at 0,0: the scope handler
 // parks it off-screen and brings it back with move_to, which would otherwise shift it sideways.
 void fix_scope(EscFile& esc, const Area& area) {
-    esc.add_value(0, "clip_children", "false");
+    esc.set_value(0, "clip_children", "false");
     esc.add_child(0, black_bar(area.screen_left - kBleed, kBleed));
     esc.add_child(0, black_bar(static_cast<int>(kLayoutWidth) - kBleed, area.screen_right + kBleed));
 }
@@ -295,7 +310,7 @@ void fix_scope(EscFile& esc, const Area& area) {
 // The binocular mask is a band across the top and bottom, open at the sides, so bars would cut it
 // off with a straight edge. Stretching it from the centre keeps its shape.
 void fix_binoculars(EscFile& esc, const Area& area) {
-    esc.add_value(0, "clip_children", "false");
+    esc.set_value(0, "clip_children", "false");
     for (int i = 0; i < esc.count(); ++i) {
         if (esc.text_of(i).find("binocs_corner") == std::string::npos) continue;
         int at[4];
@@ -312,13 +327,13 @@ int lid_half_width(const Area& area) {
 }
 
 void fix_eyes(EscFile& esc, const Area& area) {
-    esc.add_value(0, "clip_children", "false");
+    esc.set_value(0, "clip_children", "false");
     const int left = area.screen_left - kBleed;
     for (int i = 1; i < esc.count(); ++i) esc.set_span(i, left, left + 2 * lid_half_width(area));
 }
 
 void fix_flash(EscFile& esc, const Area& area) {
-    esc.add_value(0, "clip_children", "false");
+    esc.set_value(0, "clip_children", "false");
     for (int i = 1; i < esc.count(); ++i) {
         esc.set_span(i, area.screen_left - kBleed, area.screen_right + kBleed);
     }
@@ -342,7 +357,7 @@ void widen_strip(EscFile& esc, int index, const Area& area) {
 }
 
 void fix_hud(EscFile& esc, const Area& area) {
-    esc.add_value(0, "clip_children", "false");
+    esc.set_value(0, "clip_children", "false");
 
     widen_strip(esc, esc.find_by_name("top"), area);
     widen_strip(esc, esc.find_by_name("bottom"), area);
@@ -374,6 +389,45 @@ void fix_hud(EscFile& esc, const Area& area) {
     }
 }
 
+std::string panel(int left, int right, int layer, const std::string& text) {
+    char coords[64];
+    snprintf(coords, sizeof(coords), "%d 0 %d 768", left, right);
+    return "entity \"ui.comp.text\" {\r\nevalues {\r\n\"text\" : \"" + text + "\"\r\n\"layer\" : \"" +
+           std::to_string(layer) + "\"\r\n\"coords\" : \"" + coords + "\"\r\n}\r\n}";
+}
+
+// Reflects the menu background across one edge of the layout, so it carries on with no seam. The
+// dark layer over it has a ragged top and bottom, so that is reflected the same way.
+void add_menu_side(EscFile& esc, int left, int right, bool tinted) {
+    const int width = right - left;
+    const float reach = std::min(static_cast<float>(width) / kLayoutWidth, 1.0f);
+    const bool left_side = right <= 0;
+    char image_range[48];
+    snprintf(image_range, sizeof(image_range), "left=%.4f right=%.4f", left_side ? reach : 1.0f,
+             left_side ? 0.0f : 1.0f - reach);
+    const std::string range = image_range;
+    const std::string size = "width=" + std::to_string(width);
+
+    esc.add_child(0, panel(left, right, kMenuBackLayer,
+                           std::string("<img src=/material/ui/") + kMenuBackground +
+                               " xscale=stretch yscale=stretch " + range + ">"));
+    if (!tinted) return;
+    esc.add_child(0, panel(left, right, kMenuTintLayer,
+                           "<color value=@@rgb_bck@@ ><img src=/material/ui/top.mat " + size +
+                               " height=64 " + range + "><img src=/material/ui/color.mat " + size +
+                               " height=640 color=@@rgb_bck@@><img src=/material/ui/bottom.mat " +
+                               size + " height=64 " + range + ">"));
+}
+
+// The window keeps its own rect, because code that moves a window goes by its left edge. So it
+// has to stop fitting itself around its contents.
+void fix_menu(EscFile& esc, bool tinted, const Area& area) {
+    esc.set_value(0, "clip_children", "false");
+    esc.set_value(0, "fitting", "false");
+    add_menu_side(esc, area.screen_left - kBleed, 0, tinted);
+    add_menu_side(esc, static_cast<int>(kLayoutWidth), area.screen_right + kBleed, tinted);
+}
+
 std::string fix_lid_template(std::string text, const Area& area) {
     char width[32];
     snprintf(width, sizeof(width), "width=%d", lid_half_width(area));
@@ -381,13 +435,19 @@ std::string fix_lid_template(std::string text, const Area& area) {
     return text;
 }
 
-bool is_scope(const std::string& path) {
-    return path.rfind("ui/gscope", 0) == 0 && path.size() > 4 &&
+bool is_layout(const std::string& path, const char* prefix) {
+    return path.rfind(prefix, 0) == 0 && path.size() > 4 &&
            path.compare(path.size() - 4, 4, ".esc") == 0;
 }
 
+bool is_scope(const std::string& path) { return is_layout(path, "ui/gscope"); }
+
+bool is_menu(const std::string& path) {
+    return is_layout(path, "ui/m") || path == "ui/sload.esc";
+}
+
 bool rewrites(const std::string& path) {
-    return is_scope(path) || path == "ui/gbinoc.esc" || path == "ui/geyes.esc" ||
+    return is_scope(path) || is_menu(path) || path == "ui/gbinoc.esc" || path == "ui/geyes.esc" ||
            path == "ui/gflash.esc" || path == "ui/ghud.esc" || path == "def/ui/txt.def";
 }
 
@@ -450,7 +510,11 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
     else if (name == "ui/geyes.esc") fix_eyes(esc, area);
     else if (name == "ui/gflash.esc") fix_flash(esc, area);
     else if (name == "ui/ghud.esc") fix_hud(esc, area);
-    else return std::string();
+    else if (is_menu(name) && original.find(kMenuBackground) != std::string::npos) {
+        fix_menu(esc, original.find("top.mat") != std::string::npos, area);
+    } else {
+        return std::string();
+    }
     return esc.text();
 }
 

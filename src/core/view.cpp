@@ -16,6 +16,7 @@ constexpr char kSetFov[] = "?set_fov@frustum_t@prism@@QAEXM@Z";
 constexpr char kProjection[] =
     "?r_frustum_projection_matrix@prism@@YAXQAV?$mat_sq_t@M$03@1@ABV?$rectangle_t@M@1@MMMM@Z";
 constexpr char kUiInit[] = "?ui_init@prism@@YAXXZ";
+constexpr char kUiProcess[] = "?ui_process@prism@@YAXPAVr_context_t@1@@Z";
 constexpr char kCvarSet[] = "?set@cvar_t@prism@@QAE_NQBD@Z";
 constexpr char kUiSetRect[] = "?ui_set_viewport_rect@prism@@YAXABV?$rectangle_t@M@1@@Z";
 constexpr char kUiReferenceMode[] = "?ui_get_reference_mode@prism@@YAXQAI0@Z";
@@ -64,6 +65,7 @@ constexpr float kMaxFov = 170.0f;
 using SetFovFn = void(__thiscall*)(void*, float);
 using ProjectionFn = void(__cdecl*)(void*, const float*, float, float, float, float);
 using UiInitFn = void(__cdecl*)();
+using UiProcessFn = void(__cdecl*)(void*);
 using CvarSetFn = bool(__thiscall*)(void*, const char*);
 using UiSetRectFn = void(__cdecl*)(const float*);
 using UiReferenceModeFn = void(__cdecl*)(unsigned int*, unsigned int*);
@@ -77,6 +79,7 @@ using IsPausedFn = bool(__thiscall*)(void*);
 SetFovFn g_real_set_fov = nullptr;
 ProjectionFn g_real_projection = nullptr;
 UiInitFn g_real_ui_init = nullptr;
+UiProcessFn g_real_ui_process = nullptr;
 CvarSetFn g_cvar_set = nullptr;
 UiSetRectFn g_ui_set_rect = nullptr;
 UiReferenceModeFn g_ui_reference_mode = nullptr;
@@ -296,6 +299,12 @@ void __cdecl hook_ui_init() {
     view_per_frame();
 }
 
+// The game draws the whole UI here, once a frame, after the world.
+void __cdecl hook_ui_process(void* context) {
+    display_before_ui();
+    g_real_ui_process(context);
+}
+
 }  // namespace
 
 float view_adjust_fov(float fov, float aspect) {
@@ -386,8 +395,11 @@ void view_attach_game(HMODULE game, bool verified) {
     const bool wremove =
         iat_patch(game, "p3shared.dll", kUiWremove, reinterpret_cast<void*>(&hook_ui_wremove),
                   reinterpret_cast<void**>(&g_real_ui_wremove));
-    logf("view: game.dll hooks ui=%d fov=%d projection=%d panels=%d windows=%d%d%d", ui, fov,
-         projection, panels, winsert, wshow, wremove);
+    const bool process =
+        iat_patch(game, "p3shared.dll", kUiProcess, reinterpret_cast<void*>(&hook_ui_process),
+                  reinterpret_cast<void**>(&g_real_ui_process));
+    logf("view: game.dll hooks ui=%d fov=%d projection=%d panels=%d windows=%d%d%d draw=%d", ui, fov,
+         projection, panels, winsert, wshow, wremove, process);
 }
 
 }  // namespace longshot
