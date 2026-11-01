@@ -26,6 +26,7 @@ add_library(longshot_core SHARED
     src/core/crash.cpp
     src/core/display.cpp
     src/core/input.cpp
+    src/core/layout.cpp
     src/core/log.cpp
     src/core/menu.cpp
     src/core/patch.cpp

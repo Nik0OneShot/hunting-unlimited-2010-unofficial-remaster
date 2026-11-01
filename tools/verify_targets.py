@@ -127,6 +127,25 @@ def main():
     ):
         report((dll, symbol) in bins[owner].imports, f"{owner} imports {symbol[:60]}")
 
+    print("--- layout files")
+    layout = source("layout.cpp")
+    layout_names = {
+        m.group(1): m.group(2) for m in re.finditer(r'constexpr char (\w+)\[\] =\s*"([^"]+)"', layout)
+    }
+    shared = bins["p3shared.dll"]
+    report(("p3core.dll", layout_names["kFsOpen"]) in shared.imports, "p3shared imports fs_open")
+    for key in ("kMemFileBind", "kFileSize", "kFileRead"):
+        report(layout_names[key] in bins["p3core.dll"].exports, f"p3core exports {key}")
+    # Layouts and templates are both read by decipher_file, whose first step opens the file.
+    open_slot = shared.imports[("p3core.dll", layout_names["kFsOpen"])]
+    report(
+        any(i.mnemonic == "call" and f"0x{open_slot:x}" in i.op_str for i in shared.disasm(0x31950, 24)),
+        "decipher_file opens files through that import",
+    )
+    for caller, kind in ((0x1c3a, "layouts"), (0x28d9f, "templates")):
+        call = shared.disasm(caller, 5)[0]
+        report(int(call.op_str, 0) == shared.base + 0x31a60, f"{kind} are read with decipher_file")
+
     print("--- exports called directly")
     timing = re.search(r'kTmrRead\[\] = "([^"]+)"', source("timing.cpp")).group(1)
     report(timing in bins["p3core.dll"].exports, "p3core exports tmr_read")
@@ -194,6 +213,30 @@ def main():
     )
     writes = game_dll.disasm(constructor - game_dll.base, 32)
     report(any(f"0x{table:x}" in i.op_str for i in writes), "ui.comp.common.list uses that vtable")
+
+    print("--- what the layouts have to respect in game.dll")
+    # The equipment bar's slide picks its direction from where the bar sits against 0 and 1024.
+    reference_slot = game_dll.imports[("p3shared.dll", names["kUiReferenceMode"])]
+    report(
+        any(f"0x{reference_slot:x}" in i.op_str for i in game_dll.disasm(0x7f0d0, 0x90)),
+        "a slide reads the reference size",
+    )
+    slide_calls = [
+        i for i in game_dll.disasm(0x83000, 0x4000)
+        if i.mnemonic == "call" and i.op_str == hex(game_dll.base + 0x7f0d0)
+    ]
+    report(len(slide_calls) == 1, "only one slide is set up")
+    report(
+        any(i.mnemonic == "push" and i.op_str == "0x1f" for i in game_dll.disasm(0x83f6b, 8)),
+        "and that slide is the equipment bar",
+    )
+    # The scope handler parks its window off-screen and brings it back to exactly 0,0.
+    park = game_dll.disasm(0x8b4a2, 12)
+    move_slot = game_dll.imports[("p3shared.dll", "?move_to@ui_view_t@prism@@QAEXMM@Z")]
+    report(
+        park[0].op_str == "0" and any(f"0x{move_slot:x}" in i.op_str for i in park),
+        "the scope handler moves its window to 0,0",
+    )
 
     print("--- hunt tracking in game.dll")
     enter = view_constants["kEnterGameplayReturn"]

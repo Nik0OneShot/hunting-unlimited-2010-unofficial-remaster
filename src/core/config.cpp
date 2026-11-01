@@ -57,6 +57,9 @@ void config_load() {
         read_float(L"view", L"menu_scroll_smoothing_ms", g_cfg.menu_scroll_smoothing_ms);
     read_str(L"view", L"ui_layout", text, sizeof(text));
     if (!_stricmp(text, "stretch")) g_cfg.ui_layout = UiLayout::Stretch;
+    read_str(L"view", L"hud_layout", text, sizeof(text));
+    if (!_stricmp(text, "16_9")) g_cfg.hud_layout = HudLayout::Wide169;
+    else if (!_stricmp(text, "4_3")) g_cfg.hud_layout = HudLayout::Center43;
 
     g_cfg.raw_input = read_bool(L"mouse", L"raw_input", g_cfg.raw_input);
     g_cfg.fps_independent = read_bool(L"mouse", L"fps_independent", g_cfg.fps_independent);
@@ -74,9 +77,10 @@ void config_load() {
     logf("config: %dx%d@%d vsync=%d fps_cap=%d", g_cfg.width, g_cfg.height, g_cfg.refresh,
          g_cfg.vsync, g_cfg.fps_cap);
     logf("config: fov_mode=%d fov_scale=%.3f zoom_smoothing_ms=%.0f menu_scroll_smoothing_ms=%.0f "
-         "ui_layout=%d skip_intro=%d",
+         "ui_layout=%d hud_layout=%d skip_intro=%d",
          static_cast<int>(g_cfg.fov_mode), g_cfg.fov_scale, g_cfg.zoom_smoothing_ms,
-         g_cfg.menu_scroll_smoothing_ms, static_cast<int>(g_cfg.ui_layout), g_cfg.skip_intro);
+         g_cfg.menu_scroll_smoothing_ms, static_cast<int>(g_cfg.ui_layout),
+         static_cast<int>(g_cfg.hud_layout), g_cfg.skip_intro);
     logf("config: raw=%d fps_independent=%d ref_hz=%.1f sens=%.4f/%.4f zoom_mode=%d",
          g_cfg.raw_input, g_cfg.fps_independent, g_cfg.reference_hz, g_cfg.sensitivity_x,
          g_cfg.sensitivity_y, static_cast<int>(g_cfg.zoom_mode));

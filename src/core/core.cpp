@@ -124,6 +124,7 @@ extern "C" __declspec(dllexport) void __cdecl longshot_init() {
 
     timing_install(p3core);
     display_install(exe);
+    layout_install(p3core, p3shared);
 
     const bool ok = iat_patch(p3core, "KERNEL32.dll", "LoadLibraryA",
                               reinterpret_cast<void*>(&hook_load_library),
@@ -161,6 +162,16 @@ extern "C" __declspec(dllexport) float __cdecl longshot_test_zoom(float current,
 }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_wheel() { return input_test_wheel(); }
+
+// Writes the rewritten text to `out` and returns its size, or 0 to leave the file as it is.
+extern "C" __declspec(dllexport) int __cdecl longshot_test_layout(const char* path, const char* text,
+                                                                  float aspect, int hud, char* out,
+                                                                  int capacity) {
+    const std::string changed = layout_rewrite(path, text, aspect, static_cast<HudLayout>(hud));
+    if (changed.empty() || static_cast<int>(changed.size()) >= capacity) return 0;
+    memcpy(out, changed.c_str(), changed.size() + 1);
+    return static_cast<int>(changed.size());
+}
 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_glide(float shown, float seconds,
                                                                    float constant) {

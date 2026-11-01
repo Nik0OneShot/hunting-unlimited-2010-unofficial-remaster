@@ -9,6 +9,7 @@ namespace longshot {
 
 enum class FovMode { Stock, HorPlus };
 enum class UiLayout { Stretch, Center43 };
+enum class HudLayout { Edges, Wide169, Center43 };
 enum class ZoomMode { Stock, Off, Proportional };
 
 struct Config {
@@ -23,6 +24,7 @@ struct Config {
     float zoom_smoothing_ms = 60.0f;
     float menu_scroll_smoothing_ms = 45.0f;
     UiLayout ui_layout = UiLayout::Center43;
+    HudLayout hud_layout = HudLayout::Edges;
 
     bool raw_input = true;
     bool fps_independent = true;
@@ -84,6 +86,12 @@ void menu_attach_game(HMODULE game, bool verified);
 void menu_game_ready();
 float menu_glide_step(float shown, float seconds, float time_constant);
 float menu_glide_add(float shown, float delta, float limit);
+
+// layout.cpp
+void layout_install(HMODULE p3core, HMODULE p3shared);
+// The text a layout file should have at this aspect, or empty to leave it as it is.
+std::string layout_rewrite(const char* path, const std::string& original, float aspect,
+                           HudLayout hud);
 
 // display.cpp
 void display_resolve_mode();

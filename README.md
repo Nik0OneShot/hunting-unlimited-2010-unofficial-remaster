@@ -18,7 +18,9 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | Aim speed changes with frame rate, because mouse movement is multiplied by frame time | Aim speed stays the same at any frame rate |
 | The game clock ticks in whole milliseconds, which causes stutter at high refresh rates | Sub-millisecond clock |
 | Wide screens crop the top and bottom of the view | Proper Hor+ field of view |
-| Menus and HUD are stretched on wide screens | Correct proportions, centred |
+| Menus and HUD are stretched on wide screens | Correct proportions, with menus centred |
+| The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |
+| Scopes and fades only cover the middle of a wide screen | Scopes, binoculars, flashes and eyelids reach the screen edges |
 | Fullscreen changes the display mode and blocks alt-tab | Borderless fullscreen |
 | Losing focus destroys and rebuilds the window and renderer | The game stays up, and alt-tab is instant |
 | The mouse is held exclusively, and fast mice lose movement | Raw Input with no lost movement |
@@ -82,7 +84,7 @@ cmake -S . -B build -A Win32
 cmake --build build --config Release
 ```
 
-The result is in `dist`. These two checks need no game launch:
+The result is in `dist`. These three checks need no game launch:
 
 ```bash
 dist/longshot.exe --test-target "<full path>/dist/longshot_selftest.exe"
@@ -92,8 +94,13 @@ dist/longshot.exe --test-target "<full path>/dist/longshot_selftest.exe"
 python tools/verify_targets.py "<game folder>"
 ```
 
+```bash
+python tools/check_layouts.py "<game folder>"
+```
+
 The first injects into a stand-in program and writes `dist/logs/selftest.txt`. The second confirms
-every offset and symbol Longshot relies on against a game install.
+every offset and symbol Longshot relies on against a game install. The third rewrites the install's
+real layout files for each screen shape and HUD setting, and confirms the results are sound.
 
 ## How it works
 

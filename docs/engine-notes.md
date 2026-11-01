@@ -208,6 +208,37 @@ same `+0x104` field for its logo index. A hunt ends when the HUD window is remov
 becomes a panel. Frames without the world, such as loading, don't end it, in case a hunt screen pauses
 world drawing.
 
+### Layout files
+
+`.esc` files and `.def` templates are both read by `decipher_file` in `p3shared.dll`, which opens them through
+that module's `fs_open` import. Longshot hooks that import. For the handful of files it changes, it reads the
+player's copy, rewrites the text and hands back a `mem_file_bind` file. That file doesn't own its buffer, so
+Longshot keeps the buffer. Doing this before the engine parses a file means every part of the game sees the
+new positions from the start, and nothing is shipped or written to disk.
+
+Coordinates are in the window's space, with y up, and aren't relative to the parent group, so moving a group
+means moving every entity inside it. The `coords` of a `fitting` group are recalculated from its contents.
+
+Windows clip to their own rect unless they have `"clip_children" : "false"`, so anything outside 0..1024 needs
+that. The window's own rect has to stay at 0,0, though:
+
+- `ui_view_t::move_to` offsets by the distance from the current left and bottom. The scope handler parks its
+  window with `move_to(0, 1024)` and brings it back with `move_to(0, 0)`, which would shift a window that
+  doesn't start at 0,0. Anything added to it must also stay within y 0..768, or it would still show while parked.
+- Only one thing slides in the HUD: the equipment bar, group 31. The slide at `game.dll+0x7f0d0` picks its
+  direction from where the item sits. Left of 0 or right of 1024 means sideways, and only after that does it
+  check below 0, which is the case the bar relies on. So the bar has to stay within 0..1024.
+
+The scope mask is a circle with solid corners, and its sides are fully black, so black bars continue it to
+the screen edges. The binocular mask is two bands, across the top and bottom, and the view runs off both sides
+between them. Bars would cut that off with a straight edge, so its halves stretch outward from the centre.
+
+Eyelids close when the player looks at the sky. They are templates 60 and 61 in `def/ui/txt.def`, each two
+images of a fixed width side by side. Those are the only uses of `width=514`. The images have to be widened
+along with the rect, or they sit at its left end.
+
+`ui/xfader.esc` isn't used by anything. `gscore`, `gmap` and `gpause` stay inside the 4:3 area.
+
 ### Lists
 
 UI components are in `game.dll`. Each has a descriptor with its name, then its size at `+0x14` and factory

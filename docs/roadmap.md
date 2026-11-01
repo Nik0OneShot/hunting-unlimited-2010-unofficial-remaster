@@ -23,17 +23,18 @@ Still to confirm with longer play:
 
 ## 2. Full player settings
 
-- HUD position: at the screen edges or centred
-- HUD shape: 4:3 or 16:9
-- Scope and binocular masks that fill the sides of the screen
+Done:
+
+- HUD at the screen edges, in a centred 16:9 area, or in a centred 4:3 area (`hud_layout`)
+- Scope and binocular masks, flashes and eyelids that reach the screen edges
+
+Still to do:
+
 - Menu backgrounds that fill the screen
 - An in-game settings screen, instead of only `longshot.ini`
 - Sensitivity as cm/360 from a mouse DPI setting
 - Pausing while the game is in the background. The original stopped when it lost focus because it
   tore down its video. Longshot keeps the window alive, so the hunt currently keeps running.
-
-The UI layouts are plain text `.esc` files with 1024x768 coordinates, so edge anchoring can be
-worked out at load time from the player's own game files, with nothing shipped.
 
 ## 3. Performance and stability
 

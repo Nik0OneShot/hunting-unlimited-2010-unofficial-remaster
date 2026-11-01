@@ -6,6 +6,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace {
 
@@ -22,6 +24,154 @@ void near_check(const char* name, float actual, float expected) {
     fprintf(g_out, "%s  %s (got %.3f, expected %.3f)\n", passed ? "PASS" : "FAIL", name, actual,
             expected);
     if (!passed) ++g_failures;
+}
+
+using LayoutFn = int(__cdecl*)(const char*, const char*, float, int, char*, int);
+
+constexpr int kEdges = 0, kWide169 = 1, kCenter43 = 2;
+constexpr float kUltrawide = 3440.0f / 1440.0f;
+
+// Made up for this test, in the format of the game's own layout files.
+const char kHudLayout[] = R"(estruct {
+	client {
+		entities {
+			entity "ui.window" {
+				evalues {
+					"coords" : "0 0 1024 768"
+				}
+				entities {
+					entity "ui.comp.group" {
+						evalues {
+							"coords" : "14 1 643 137"
+							"id" : "88"
+						}
+						entities {
+							entity "ui.comp.text" {
+								evalues {
+									"coords" : "288 1 385 108"
+								}
+							}
+						}
+					}
+					entity "ui.comp.group" {
+						evalues {
+							"coords" : "747 1 1014 517"
+							"id" : "40"
+						}
+					}
+					entity "ui.comp.group" {
+						evalues {
+							"coords" : "382 -124 1014 0"
+							"id" : "31"
+						}
+					}
+					entity "ui.comp.text" {
+						evalues {
+							"coords" : "459 677 562 701"
+							"name" : "timer"
+						}
+					}
+				}
+			}
+		}
+	}
+}
+)";
+
+const char kScopeLayout[] = R"(estruct {
+	client {
+		entities {
+			entity "ui.window" {
+				evalues {
+					"coords" : "0 0 1024 768"
+				}
+				entities {
+				}
+			}
+		}
+	}
+}
+)";
+
+bool has_coords(const char* text, const char* coords) {
+    return strstr(text, (std::string("\"coords\" : \"") + coords + "\"").c_str()) != nullptr;
+}
+
+void layout_checks(LayoutFn rewrite) {
+    static char out[16384];
+
+    check("a 4:3 screen leaves the HUD alone",
+          rewrite("/ui/ghud.esc", kHudLayout, 4.0f / 3.0f, kEdges, out, sizeof(out)) == 0);
+    check("other files are left alone",
+          rewrite("/ui/mmain.esc", kHudLayout, kUltrawide, kEdges, out, sizeof(out)) == 0);
+
+    check("edges: HUD rewritten",
+          rewrite("/ui/ghud.esc", kHudLayout, kUltrawide, kEdges, out, sizeof(out)) > 0);
+    check("edges: left panel reaches the screen edge", has_coords(out, "-391 1 238 137"));
+    check("edges: its contents move with it", has_coords(out, "-117 1 -20 108"));
+    check("edges: right panel reaches the screen edge", has_coords(out, "1152 1 1419 517"));
+    check("edges: the equipment bar is centred in the original area",
+          has_coords(out, "196 -124 828 0"));
+    check("edges: the timer stays put", has_coords(out, "459 677 562 701"));
+    check("edges: the window stays where it was", has_coords(out, "0 0 1024 768"));
+    check("edges: the window stops clipping", strstr(out, "\"clip_children\" : \"false\"") != nullptr);
+
+    rewrite("/ui/ghud.esc", kHudLayout, kUltrawide, kWide169, out, sizeof(out));
+    check("16:9: left panel at the 16:9 edge", has_coords(out, "-157 1 472 137"));
+    check("16:9: right panel at the 16:9 edge", has_coords(out, "918 1 1185 517"));
+
+    rewrite("/ui/ghud.esc", kHudLayout, kUltrawide, kCenter43, out, sizeof(out));
+    check("4:3: left panel stays", has_coords(out, "14 1 643 137"));
+    check("4:3: right panel stays", has_coords(out, "747 1 1014 517"));
+    check("4:3: equipment bar stays", has_coords(out, "382 -124 1014 0"));
+
+    rewrite("/ui/ghud.esc", kHudLayout, 16.0f / 10.0f, kWide169, out, sizeof(out));
+    check("a 16:9 HUD never leaves a narrower screen", has_coords(out, "-88 1 541 137"));
+
+    check("scope rewritten",
+          rewrite("/ui/gscope_r2x.esc", kScopeLayout, kUltrawide, kEdges, out, sizeof(out)) > 0);
+    check("scope: bar on the left", has_coords(out, "-408 0 2 768"));
+    check("scope: bar on the right", has_coords(out, "1022 0 1432 768"));
+    check("scope: bars are solid black", strstr(out, "color=FF000000") != nullptr);
+}
+
+// tools/check_layouts.py extracts the real files and reads the results back. Each line of
+// list.txt names a file in `folder`, then the game path it came from.
+void rewrite_folder(const wchar_t* folder, LayoutFn rewrite) {
+    static char text[1 << 20];
+    static char out[1 << 20];
+    const float aspects[] = {16.0f / 10.0f, 16.0f / 9.0f, kUltrawide, 32.0f / 9.0f};
+    const wchar_t* const aspect_names[] = {L"16x10", L"16x9", L"ultrawide", L"32x9"};
+
+    FILE* list = nullptr;
+    _wfopen_s(&list, (std::wstring(folder) + L"\\list.txt").c_str(), L"r");
+    check("layout list opens", list != nullptr);
+    if (!list) return;
+
+    char name[64], game_path[128];
+    while (fscanf_s(list, "%63s %127s", name, 64u, game_path, 128u) == 2) {
+        const std::wstring base =
+            std::wstring(folder) + L"\\" + std::wstring(name, name + strlen(name));
+        FILE* in = nullptr;
+        _wfopen_s(&in, base.c_str(), L"rb");
+        if (!in) continue;
+        text[fread(text, 1, sizeof(text) - 1, in)] = 0;
+        fclose(in);
+
+        for (int aspect = 0; aspect < 4; ++aspect) {
+            for (int hud = 0; hud < 3; ++hud) {
+                const int size = rewrite(game_path, text, aspects[aspect], hud, out, sizeof(out));
+                const std::wstring result_path = base + L"." + aspect_names[aspect] + L"." +
+                                                 std::to_wstring(hud);
+                FILE* result = nullptr;
+                _wfopen_s(&result, result_path.c_str(), L"wb");
+                if (!result) continue;
+                fwrite(out, 1, size, result);
+                fclose(result);
+            }
+        }
+    }
+    fclose(list);
 }
 
 }  // namespace
@@ -57,8 +207,9 @@ int main() {
         GetProcAddress(core, "longshot_test_glide"));
     auto test_glide_add = reinterpret_cast<float(__cdecl*)(float, float, float)>(
         GetProcAddress(core, "longshot_test_glide_add"));
+    auto test_layout = reinterpret_cast<LayoutFn>(GetProcAddress(core, "longshot_test_layout"));
     const bool exports = test_iat && test_fov && test_raw && read_raw && count_raw && test_ui &&
-                         test_zoom && test_wheel && test_glide && test_glide_add;
+                         test_zoom && test_wheel && test_glide && test_glide_add && test_layout;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -92,6 +243,12 @@ int main() {
     near_check("list glide snaps home when nearly there", test_glide(0.2f, 0.001f, 0.045f), 0.0f);
     near_check("list glide never overshoots a row", test_glide_add(-20.0f, -30.0f, 30.0f), -30.0f);
     near_check("list glide reverses cleanly", test_glide_add(-20.0f, 30.0f, 30.0f), 10.0f);
+
+    layout_checks(test_layout);
+    wchar_t folder[MAX_PATH];
+    if (GetEnvironmentVariableW(L"LONGSHOT_LAYOUT_DIR", folder, MAX_PATH)) {
+        rewrite_folder(folder, test_layout);
+    }
 
     check("raw mouse thread starts", test_raw() == 0);
 
