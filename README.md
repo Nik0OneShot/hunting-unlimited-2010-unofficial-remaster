@@ -22,7 +22,7 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |
 | Scopes and fades only cover the middle of a wide screen | Scopes, binoculars, flashes and eyelids reach the screen edges |
 | Fullscreen changes the display mode and blocks alt-tab | Borderless fullscreen |
-| Losing focus destroys and rebuilds the window and renderer | The game stays up, and alt-tab is instant |
+| Losing focus destroys and rebuilds the window and renderer | The game stays up, and alt-tab is instant. The hunt and its sound keep running, or the hunt can pause while you're away |
 | The mouse is held exclusively, and fast mice lose movement | Raw Input with no lost movement |
 | Only three mouse buttons work | Side buttons can be bound in the game's controls menu |
 | Fixed scoped sensitivity | Zoom-scaled sensitivity, which can be turned off |

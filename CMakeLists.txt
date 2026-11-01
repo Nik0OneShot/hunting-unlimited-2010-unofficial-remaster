@@ -30,6 +30,7 @@ add_library(longshot_core SHARED
     src/core/log.cpp
     src/core/menu.cpp
     src/core/patch.cpp
+    src/core/sound.cpp
     src/core/timing.cpp
     src/core/view.cpp
 )

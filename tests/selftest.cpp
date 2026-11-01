@@ -27,6 +27,24 @@ void near_check(const char* name, float actual, float expected) {
 }
 
 using LayoutFn = int(__cdecl*)(const char*, const char*, float, int, char*, int);
+using PauseFn = int(__cdecl*)(bool*, bool, bool, bool);
+
+void pause_checks(PauseFn step) {
+    bool ours = false;
+    check("playing: nothing to do", step(&ours, true, true, false) == 0);
+    check("tabbing out of a hunt pauses it", step(&ours, true, false, false) == 1);
+    check("that happens once", step(&ours, true, false, true) == 0);
+    check("coming back resumes it", step(&ours, true, true, true) == -1);
+    check("and that happens once", step(&ours, true, true, false) == 0);
+
+    check("a pause the player set survives tabbing out", step(&ours, true, false, true) == 0);
+    check("and is still there on return", step(&ours, true, true, true) == 0);
+
+    check("menus aren't paused", step(&ours, false, false, false) == 0);
+
+    check("tabbing out again pauses", step(&ours, true, false, false) == 1);
+    check("a hunt ending lets go of the pause", step(&ours, false, false, true) == -1);
+}
 
 constexpr int kEdges = 0, kWide169 = 1, kCenter43 = 2;
 constexpr float kUltrawide = 3440.0f / 1440.0f;
@@ -208,8 +226,10 @@ int main() {
     auto test_glide_add = reinterpret_cast<float(__cdecl*)(float, float, float)>(
         GetProcAddress(core, "longshot_test_glide_add"));
     auto test_layout = reinterpret_cast<LayoutFn>(GetProcAddress(core, "longshot_test_layout"));
+    auto test_pause = reinterpret_cast<PauseFn>(GetProcAddress(core, "longshot_test_pause"));
     const bool exports = test_iat && test_fov && test_raw && read_raw && count_raw && test_ui &&
-                         test_zoom && test_wheel && test_glide && test_glide_add && test_layout;
+                         test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
+                         test_pause;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -244,6 +264,7 @@ int main() {
     near_check("list glide never overshoots a row", test_glide_add(-20.0f, -30.0f, 30.0f), -30.0f);
     near_check("list glide reverses cleanly", test_glide_add(-20.0f, 30.0f, 30.0f), 10.0f);
 
+    pause_checks(test_pause);
     layout_checks(test_layout);
     wchar_t folder[MAX_PATH];
     if (GetEnvironmentVariableW(L"LONGSHOT_LAYOUT_DIR", folder, MAX_PATH)) {

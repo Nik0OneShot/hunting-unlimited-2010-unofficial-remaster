@@ -36,6 +36,7 @@ struct Config {
     bool high_res_timer = true;
 
     bool skip_intro = false;
+    bool pause_in_background = false;
 };
 
 // The mode the game is asked to run in, resolved from the config and the desktop.
@@ -93,6 +94,9 @@ void layout_install(HMODULE p3core, HMODULE p3shared);
 std::string layout_rewrite(const char* path, const std::string& original, float aspect,
                            HudLayout hud);
 
+// sound.cpp
+void sound_attach_ds8(HMODULE ds8, bool verified);
+
 // display.cpp
 void display_resolve_mode();
 void display_install(HMODULE exe);
@@ -107,6 +111,11 @@ float view_ui_to_pixel(float x, float left, float right, int width);
 float view_zoom_step(float current, float target, float seconds, float time_constant);
 // Width in pixels of each side bar that nothing drew this frame, or 0. Resets for the next frame.
 int view_take_bar_width();
+// Pauses a hunt while the game is in the background, when the player has asked for that.
+void view_update_background_pause();
+// 1 to pause, -1 to resume, 0 to leave it. `ours` says whether Longshot set the current pause, so a
+// pause the player set themselves is left in place.
+int view_background_pause_step(bool* ours, bool in_hunt, bool focused, bool game_paused);
 
 // input.cpp
 void input_attach_di8(HMODULE di8);

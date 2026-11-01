@@ -30,6 +30,11 @@ constexpr char kHudLayout[] = "/ui/ghud.esc";
 constexpr uint32_t kGameObject = 0x1e9d60;
 constexpr size_t kMainViewport = 0x2a4;
 
+// Methods of the game object. The pause key uses kMethodPause, and while it's set the game frame
+// doesn't advance the world.
+constexpr size_t kMethodPause = 0x28;
+constexpr size_t kMethodIsPaused = 0x2c;
+
 // Where ui_wshow returns to inside the hunt's enter-gameplay method. Nothing else shows the HUD
 // like this, and the menu scene is a different class that doesn't have that method.
 constexpr uint32_t kEnterGameplayReturn = 0x3684;
@@ -66,6 +71,8 @@ using UiRef2ViewFn = void(__cdecl*)(float*, const float*, int, int);
 using UiWinsertFn = void*(__cdecl*)(const char*, const char*, unsigned int, const char*, bool);
 using UiWshowFn = void(__cdecl*)(void*, unsigned int);
 using UiWremoveFn = void(__cdecl*)(void*);
+using PauseFn = void(__thiscall*)(void*, bool);
+using IsPausedFn = bool(__thiscall*)(void*);
 
 SetFovFn g_real_set_fov = nullptr;
 ProjectionFn g_real_projection = nullptr;
@@ -86,6 +93,7 @@ bool g_ui_rect_valid = false;
 bool g_world_drawn = false;
 void* g_hud_window = nullptr;
 bool g_in_hunt = false;
+bool g_background_paused = false;
 
 void set_in_hunt(bool in_hunt) {
     if (in_hunt != g_in_hunt) logf("view: hunt %s", in_hunt ? "started" : "ended");
@@ -124,9 +132,10 @@ float update_zoom(float target) {
     return g_zoom_shown;
 }
 
+char* game_object() { return g_verified ? *reinterpret_cast<char**>(g_game + kGameObject) : nullptr; }
+
 const float* main_viewport() {
-    if (!g_verified) return nullptr;
-    char* game = *reinterpret_cast<char**>(g_game + kGameObject);
+    char* game = game_object();
     return game ? reinterpret_cast<const float*>(game + kMainViewport) : nullptr;
 }
 
@@ -310,6 +319,30 @@ float view_zoom_step(float current, float target, float seconds, float time_cons
 
 void view_per_frame() {
     if (g_ui_ready && g_ui_rect_valid) g_ui_set_rect(g_ui_rect);
+}
+
+int view_background_pause_step(bool* ours, bool in_hunt, bool focused, bool game_paused) {
+    const bool want = in_hunt && !focused;
+    if (want == *ours || (want && game_paused)) return 0;
+    *ours = want;
+    return want ? 1 : -1;
+}
+
+void view_update_background_pause() {
+    char* game = game_object();
+    if (!g_cfg.pause_in_background || !game) return;
+
+    void** methods = *reinterpret_cast<void***>(game);
+    auto is_paused = reinterpret_cast<IsPausedFn>(methods[kMethodIsPaused / sizeof(void*)]);
+    const int change =
+        view_background_pause_step(&g_background_paused, g_in_hunt, game_has_focus(), is_paused(game));
+    if (change == 0) return;
+
+    // The pause key also switches the sound tag, but that destroys any sound that doesn't loop,
+    // music included. Windows silences the sound by itself here. See sound_attach_ds8.
+    const bool pause = change > 0;
+    reinterpret_cast<PauseFn>(methods[kMethodPause / sizeof(void*)])(game, pause);
+    logf("view: hunt %s", pause ? "paused in the background" : "resumed");
 }
 
 int view_take_bar_width() {

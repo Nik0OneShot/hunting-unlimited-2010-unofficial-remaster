@@ -20,6 +20,7 @@ constexpr KnownBuild kCore = {"p3core.dll", 0x4A378EAC, 0x00063000};
 constexpr KnownBuild kShared = {"p3shared.dll", 0x4A378EB1, 0x0005D000};
 constexpr KnownBuild kGl = {"gl.dll", 0x4A378EB8, 0x0003B000};
 constexpr KnownBuild kDi8 = {"di8.dll", 0x4A378EB8, 0x00018000};
+constexpr KnownBuild kDs8 = {"ds8.dll", 0x4A378EB9, 0x00010000};
 constexpr KnownBuild kGame = {"game.dll", 0x4A378EC9, 0x0030B000};
 
 using LoadLibraryFn = HMODULE(WINAPI*)(LPCSTR);
@@ -29,6 +30,7 @@ std::wstring g_root;
 LoadLibraryFn g_real_load_library = nullptr;
 bool g_gl_done = false;
 bool g_di8_done = false;
+bool g_ds8_done = false;
 bool g_game_done = false;
 
 bool check_build(HMODULE mod, const KnownBuild& known) {
@@ -52,6 +54,9 @@ void on_module_loaded(HMODULE mod, const char* path) {
         g_di8_done = true;
         check_build(mod, kDi8);
         input_attach_di8(mod);
+    } else if (!_stricmp(name, "ds8.dll") && !g_ds8_done) {
+        g_ds8_done = true;
+        sound_attach_ds8(mod, check_build(mod, kDs8));
     } else if (!_stricmp(name, "game.dll") && !g_game_done) {
         g_game_done = true;
         const bool verified = check_build(mod, kGame);
@@ -162,6 +167,11 @@ extern "C" __declspec(dllexport) float __cdecl longshot_test_zoom(float current,
 }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_wheel() { return input_test_wheel(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_pause(bool* ours, bool in_hunt,
+                                                                 bool focused, bool game_paused) {
+    return view_background_pause_step(ours, in_hunt, focused, game_paused);
+}
 
 // Writes the rewritten text to `out` and returns its size, or 0 to leave the file as it is.
 extern "C" __declspec(dllexport) int __cdecl longshot_test_layout(const char* path, const char* text,

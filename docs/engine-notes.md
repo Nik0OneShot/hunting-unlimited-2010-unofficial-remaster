@@ -175,6 +175,39 @@ keeps its window, and it sleeps a little each frame while in the background.
 Windows on editions without Xbox Game Bar can show an `ms-gamingoverlay` link error when a game takes
 focus. Before this fix, that dialog alone was enough to set off the restart.
 
+## Sound
+
+The engine checks each sound once a frame in `snd_update_state`. A sound's tag is passed when it's created: world
+sounds use `0x0a`, and menu music uses `-1`. `snd_set_current_tag` flags every sound with a different tag as silenced,
+except `-1`.
+
+A silenced sound loses its channel. If it loops, it starts again when it's allowed back. If it doesn't, the engine
+forgets it, and destroys it if it's a one-shot. So switching tags can't pause a sound. Music in a hunt is exposed to
+this: `/music/target_range.ogg` is a one-shot with tag `0x0a`.
+
+`ds8.dll` builds its buffer flags at `+0x1191` from `0xa0`, or `0xb0` for 3D sounds, plus `DSBCAPS_LOCSOFTWARE`,
+since `s_acceleration` defaults to 0. Neither focus flag is set, so Windows silences sounds while their window is
+out of focus. They keep their place, and `GetStatus` still reports them as playing, even across a real focus change,
+so the engine doesn't lose them.
+
+With `pause_in_background` off, Longshot adds `DSBCAPS_GLOBALFOCUS`, so a running hunt stays audible.
+
+## Pausing
+
+The original stopped when it lost focus, because it tore down its video. Longshot keeps the window alive, so a
+hunt keeps running unless `pause_in_background` is on.
+
+The game object has `pause(bool)` at vtable `+0x28` and `is_paused` at `+0x2c`, both on the byte at `+0x550`.
+While that is set, the game frame at `game.dll+0x1034c0` doesn't advance the world. The pause key (`gamepause`,
+impulse `0x45`), the in-game menu and other dialogs all use it, and one dialog, at `+0x44a10`, saves the old value
+before pausing.
+
+The pause window also switches the sound tag, with `0x14` to pause and `0x0a` to resume. Longshot doesn't, because
+that would destroy any one-shot that's playing. It leaves the quiet to Windows instead.
+
+Longshot calls `pause` from its swap hook, on the game's main thread. It only does so during a hunt, and only if the
+game isn't already paused, so a pause the player set is still there when they come back.
+
 ## UI
 
 Layouts are text files with coordinates in a 1024x768 space, from `ui_get_reference_mode`.

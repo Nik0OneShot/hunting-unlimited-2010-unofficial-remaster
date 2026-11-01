@@ -279,6 +279,7 @@ BOOL present(SwapBuffersFn real, HDC dc) {
     view_per_frame();
     clear_side_bars(view_take_bar_width());
     update_cursor_clip();
+    view_update_background_pause();
     if (g_main_window && !game_has_focus()) Sleep(kBackgroundSleepMs);
     g_limiter.wait();
     const BOOL ok = real(dc);

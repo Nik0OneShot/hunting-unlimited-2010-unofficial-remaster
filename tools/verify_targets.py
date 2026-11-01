@@ -87,6 +87,7 @@ def main():
         "p3shared.dll": Binary(game / "p3shared.dll"),
         "gl.dll": Binary(game / "lib" / "gl.dll"),
         "di8.dll": Binary(game / "lib" / "di8.dll"),
+        "ds8.dll": Binary(game / "lib" / "ds8.dll"),
         "game.dll": Binary(game / "lib" / "game.dll"),
     }
 
@@ -168,6 +169,17 @@ def main():
         rva = view_constants[key]
         actual = bytes(game_dll.image[rva:rva + len(name) + 1])
         report(actual == name.encode() + b"\0", f"{name} at +0x{rva:x}")
+
+    print("--- sound buffers in ds8.dll")
+    sound = constants(source("sound.cpp"))
+    ds8 = bins["ds8.dll"]
+    for key, value in (("kBufferFlags", "kPlainFlags"), ("kBufferFlags3d", "k3dFlags")):
+        ins = ds8.disasm(sound[key], 5)[0]
+        report(ins.op_str == f"edi, {sound[value]:#x}", f"{key} holds those flags")
+    # Those flags go into the buffer description, through edi, with no focus flag of their own.
+    build = ds8.disasm(0x1191, 0x40)
+    report(any(i.op_str == "eax, edi" and i.mnemonic == "or" for i in build), "they reach the buffer flags")
+    report(all("0x8000" not in i.op_str and "0x4000" != i.op_str for i in build), "no focus flag is set already")
 
     print("--- focus handling in prism3d.exe")
     host = bins["prism3d.exe"]
@@ -262,6 +274,31 @@ def main():
     report(
         f"0x{game_dll.base + view_constants['kGameObject']:x}" in fetch.op_str,
         "game object lives at kGameObject",
+    )
+
+    print("--- pausing in game.dll")
+    # The game object's constructor sets its vtable and stores itself in kGameObject.
+    constructor = game_dll.disasm(0x1060f0, 0x60)
+    report(
+        any(f"0x{game_dll.base + view_constants['kGameObject']:x}" in i.op_str for i in constructor),
+        "this constructor fills kGameObject",
+    )
+    game_table = game_dll.base + 0x1b06cc
+    report(any(f"0x{game_table:x}" in i.op_str for i in constructor), "and sets this vtable")
+    def game_method(offset):
+        return struct.unpack_from("<I", game_dll.image, 0x1b06cc + offset)[0] - game_dll.base
+    pause = game_dll.disasm(game_method(view_constants["kMethodPause"]), 13)
+    report(
+        any(i.op_str == "byte ptr [ecx + 0x550], al" for i in pause) and pause[-1].op_str == "4",
+        "kMethodPause sets the flag and takes one argument",
+    )
+    is_paused = game_dll.disasm(game_method(view_constants["kMethodIsPaused"]), 7)
+    report(is_paused[0].op_str == "al, byte ptr [ecx + 0x550]", "kMethodIsPaused reads the flag")
+    # The game frame only advances the world while that flag is clear.
+    guard = game_dll.disasm(0x1035d0, 10)
+    report(
+        guard[0].op_str == "al, byte ptr [ebp + 0x550]" and guard[2].mnemonic == "jne",
+        "the game frame checks the flag",
     )
 
     print("--- input offsets in game.dll")

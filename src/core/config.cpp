@@ -73,6 +73,8 @@ void config_load() {
 
     g_cfg.high_res_timer = read_bool(L"timing", L"high_res_timer", g_cfg.high_res_timer);
     g_cfg.skip_intro = read_bool(L"game", L"skip_intro", g_cfg.skip_intro);
+    g_cfg.pause_in_background =
+        read_bool(L"game", L"pause_in_background", g_cfg.pause_in_background);
 
     logf("config: %dx%d@%d vsync=%d fps_cap=%d", g_cfg.width, g_cfg.height, g_cfg.refresh,
          g_cfg.vsync, g_cfg.fps_cap);
@@ -84,7 +86,8 @@ void config_load() {
     logf("config: raw=%d fps_independent=%d ref_hz=%.1f sens=%.4f/%.4f zoom_mode=%d",
          g_cfg.raw_input, g_cfg.fps_independent, g_cfg.reference_hz, g_cfg.sensitivity_x,
          g_cfg.sensitivity_y, static_cast<int>(g_cfg.zoom_mode));
-    logf("config: high_res_timer=%d", g_cfg.high_res_timer);
+    logf("config: high_res_timer=%d pause_in_background=%d", g_cfg.high_res_timer,
+         g_cfg.pause_in_background);
 }
 
 }  // namespace longshot
