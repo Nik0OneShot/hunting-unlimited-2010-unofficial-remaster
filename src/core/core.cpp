@@ -45,6 +45,7 @@ void on_module_loaded(HMODULE mod, const char* path) {
         if (*p == '/' || *p == '\\') name = p + 1;
     }
     logf("core: loaded %s", path);
+    profile_attach_module(mod);
 
     if (!_stricmp(name, "gl.dll") && !g_gl_done) {
         g_gl_done = true;
@@ -62,7 +63,9 @@ void on_module_loaded(HMODULE mod, const char* path) {
         input_attach_game(mod, verified);
         menu_attach_game(mod, verified);
         view_attach_game(mod, verified);
+        detail_attach_game(mod, verified);
         settings_attach_game(mod, verified);
+        profile_attach_game(mod, verified);
     }
 }
 
@@ -130,6 +133,7 @@ extern "C" __declspec(dllexport) void __cdecl longshot_init() {
     timing_install(p3core);
     display_install(exe);
     layout_install(p3core, p3shared);
+    profile_attach_module(p3shared);
 
     const bool ok = iat_patch(p3core, "KERNEL32.dll", "LoadLibraryA",
                               reinterpret_cast<void*>(&hook_load_library),
@@ -199,6 +203,32 @@ extern "C" __declspec(dllexport) float __cdecl longshot_test_glide(float shown, 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_glide_add(float shown, float delta,
                                                                        float limit) {
     return menu_glide_add(shown, delta, limit);
+}
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_row_fits(float top, float bottom,
+                                                                    float shift, float rows_top,
+                                                                    float rows_bottom,
+                                                                    float overhang) {
+    return menu_row_fits(top, bottom, shift, rows_top, rows_bottom, overhang) ? 1 : 0;
+}
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_multisample(HDC dc, int samples) {
+    return graphics_test_multisample(dc, samples);
+}
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_post() { return post_test(); }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_detail(float reference, float fov,
+                                                                    float multiplier) {
+    return detail_scale(reference, fov, multiplier);
+}
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_grass(float visible) {
+    return detail_grass_radius(visible);
+}
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_slow(float frame_ms, float typical_ms) {
+    return profile_is_slow(frame_ms, typical_ms) ? 1 : 0;
 }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_rawmouse() {

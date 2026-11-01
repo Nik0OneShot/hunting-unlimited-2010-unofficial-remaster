@@ -68,7 +68,11 @@ class FrameStats {
     void on_frame() {
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
-        if (last_ != 0) frames_ms_.push_back(static_cast<float>(now.QuadPart - last_) * ms_per_tick());
+        if (last_ != 0) {
+            const float frame_ms = static_cast<float>(now.QuadPart - last_) * ms_per_tick();
+            frames_ms_.push_back(frame_ms);
+            profile_frame_done(frame_ms, typical_ms_, game_has_focus());
+        }
         last_ = now.QuadPart;
 
         if (window_start_ == 0) window_start_ = now.QuadPart;
@@ -101,6 +105,8 @@ class FrameStats {
         logf("frames: %.1f fps | ms p50=%.2f p95=%.2f p99=%.2f max=%.2f | spikes(>2x median)=%u/%u",
              n * 1000.0f / elapsed_ms, median, frames_ms_[n * 95 / 100], frames_ms_[n * 99 / 100],
              frames_ms_[n - 1], static_cast<unsigned>(spikes), static_cast<unsigned>(n));
+        profile_report_window();
+        typical_ms_ = median;
         frames_ms_.clear();
     }
 
@@ -108,6 +114,7 @@ class FrameStats {
     LONGLONG last_ = 0;
     LONGLONG window_start_ = 0;
     float ms_per_tick_ = 0.0f;
+    float typical_ms_ = 0.0f;
 };
 
 class FrameLimiter {
@@ -282,8 +289,12 @@ BOOL present(SwapBuffersFn real, HDC dc) {
     update_cursor_clip();
     view_update_background_pause();
     if (g_main_window && !game_has_focus()) Sleep(kBackgroundSleepMs);
-    g_limiter.wait();
-    const BOOL ok = real(dc);
+    BOOL ok;
+    {
+        ProfileTimer timer(ProfileSection::Swap);
+        g_limiter.wait();
+        ok = real(dc);
+    }
     g_stats.on_frame();
     return ok;
 }
@@ -296,13 +307,18 @@ BOOL WINAPI hook_swap_interval(int) {
     return g_real_swap_interval(g_cfg.vsync ? 1 : 0);
 }
 
+template <typename Proc>
+void* wrap_gl(const char* name, Proc proc) {
+    return profile_wrap_gl(name, graphics_wrap_gl(name, reinterpret_cast<void*>(proc)));
+}
+
 PROC WINAPI hook_wgl_get_proc(LPCSTR name) {
     PROC proc = g_real_wgl_get_proc(name);
     if (proc && !strcmp(name, "wglSwapIntervalEXT")) {
         g_real_swap_interval = reinterpret_cast<SwapIntervalFn>(proc);
         return reinterpret_cast<PROC>(&hook_swap_interval);
     }
-    return proc;
+    return proc ? reinterpret_cast<PROC>(wrap_gl(name, proc)) : proc;
 }
 
 FARPROC WINAPI hook_gl_get_proc(HMODULE mod, LPCSTR name) {
@@ -316,7 +332,7 @@ FARPROC WINAPI hook_gl_get_proc(HMODULE mod, LPCSTR name) {
         g_real_wgl_swap = reinterpret_cast<SwapBuffersFn>(proc);
         return reinterpret_cast<FARPROC>(&hook_wgl_swap_buffers);
     }
-    return proc;
+    return reinterpret_cast<FARPROC>(wrap_gl(name, proc));
 }
 
 // The engine's fullscreen path already makes a borderless popup window, so skipping the
@@ -414,6 +430,7 @@ void display_attach_gl(HMODULE gl) {
                                  reinterpret_cast<void*>(&hook_gl_get_proc),
                                  reinterpret_cast<void**>(&g_real_get_proc));
     logf("display: gl.dll hooks mode=%d swap=%d procs=%d", cds, swap, procs);
+    graphics_attach_gl(gl);
 }
 
 }  // namespace longshot

@@ -61,6 +61,16 @@ constexpr Choice kFrameCaps[] = {{"Off", "0"},     {"60", "60"},   {"120", "120"
                                  {"165", "165"},   {"240", "240"}, {"360", "360"}};
 constexpr Choice kFovScales[] = {
     {"Standard", "1.0"}, {"+10%", "1.1"}, {"+20%", "1.2"}, {"+30%", "1.3"}};
+constexpr Choice kAntiAliasing[] = {{"Off", "0"}, {"2x", "2"}, {"4x", "4"}, {"8x", "8"}};
+constexpr Choice kTextureFiltering[] = {
+    {"Game setting", "0"}, {"4x", "4"}, {"8x", "8"}, {"16x", "16"}};
+constexpr Choice kGrassDistance[] = {{"Game", "0"}, {"Far", "47"}, {"Very far", "85"}};
+constexpr Choice kLodDistance[] = {
+    {"Game", "1"}, {"Far", "1.5"}, {"Very far", "2"}, {"Extreme", "3"}};
+constexpr Choice kSharpening[] = {
+    {"Off", "0"}, {"Light", "0.3"}, {"Medium", "0.6"}, {"Strong", "1.0"}};
+constexpr Choice kVibrance[] = {{"Original", "0"}, {"Richer", "0.2"}, {"Vivid", "0.4"}};
+constexpr Choice kBloom[] = {{"Off", "0"}, {"Soft", "0.15"}, {"Strong", "0.35"}};
 constexpr Choice kZoomModes[] = {{"Scales with zoom", "proportional"},
                                  {"Same as unscoped", "off"},
                                  {"Game default", "stock"}};
@@ -91,6 +101,14 @@ constexpr int count_of(const Choice (&)[N]) {
 const Row kRows[] = {
     {"HUD position", L"view", L"hud_layout", kHudChoices, count_of(kHudChoices), "edges", true},
     {"Field of view", L"view", L"fov_scale", kFovScales, count_of(kFovScales), "1.0", false},
+    {"Anti-aliasing", L"view", L"anti_aliasing", kAntiAliasing, count_of(kAntiAliasing), "0", true},
+    {"Texture filtering", L"view", L"texture_filtering", kTextureFiltering,
+     count_of(kTextureFiltering), "0", true},
+    {"Grass distance", L"view", L"grass_distance", kGrassDistance, count_of(kGrassDistance), "0", false},
+    {"LOD distance", L"view", L"lod_distance", kLodDistance, count_of(kLodDistance), "1", false},
+    {"Sharpening", L"view", L"sharpening", kSharpening, count_of(kSharpening), "0", false},
+    {"Colour", L"view", L"vibrance", kVibrance, count_of(kVibrance), "0", false},
+    {"Bloom", L"view", L"bloom", kBloom, count_of(kBloom), "0", false},
     {"V-sync", L"display", L"vsync", kOnOff, count_of(kOnOff), "1", false},
     {"Frame rate limit", L"display", L"fps_cap", kFrameCaps, count_of(kFrameCaps), "0", false},
     {"Turn speed", L"mouse", L"cm_per_360", kTurnSpeeds, count_of(kTurnSpeeds), "0", false},
@@ -207,6 +225,7 @@ void save_rows() {
     if (!any) return;
     config_load();
     display_settings_changed();
+    detail_settings_changed();
 }
 
 // Hides whichever of the game's own tabs is showing, the same way the game reaches it.

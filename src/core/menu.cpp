@@ -34,9 +34,9 @@ constexpr size_t kVptrnodeNext = 4;
 constexpr size_t kVptrnodeData = 8;
 constexpr size_t kItemUnit = 0x10;  // c_item_t's pointer to the object it wraps
 
-// The wheel arrives as these UI actions, one for each direction.
-constexpr int kActionWheelFirst = 0x12;
-constexpr int kActionWheelLast = 0x13;
+// View fields. Layout coordinates run upward, so top is the larger of the two.
+constexpr size_t kViewTop = 0xb8;
+constexpr size_t kViewBottom = 0xbc;
 
 constexpr int kMoveDrawnAndHitAreas = 3;  // the flags move_to passes to offset
 
@@ -47,6 +47,11 @@ constexpr size_t kTriggerValue = 0x34;
 constexpr float kGlideSnap = 0.25f;
 constexpr double kMaxGlideStep = 0.05;
 constexpr int kMaxGlides = 4;
+
+// Rows aren't clipped to their list, so one that would land outside it waits out here instead.
+constexpr float kParkDistance = 4096.0f;
+constexpr int kMaxParkedRows = 32;
+constexpr float kRowOverhang = 0.25f;  // of a row, the most it can poke out of the list
 
 using TriggerByNameFn = void*(__cdecl*)(const char*);
 using ListHandlerFn = void(__thiscall*)(void*);
@@ -59,6 +64,9 @@ struct Glide {
     void* first_row = nullptr;
     float shown = 0.0f;
     double last_step = 0.0;
+    float rows_top = 0.0f;  // where the rows reach when they're at rest
+    float rows_bottom = 0.0f;
+    uint32_t parked = 0;
 };
 
 char* g_game = nullptr;
@@ -69,6 +77,7 @@ ListHandlerFn g_real_list_handler = nullptr;
 ListActionFn g_real_list_action = nullptr;
 char g_pressed_trigger[kTriggerSize] = {};
 Glide g_glides[kMaxGlides];
+int g_list_action_depth = 0;
 
 template <typename T>
 T& field(void* object, size_t offset) {
@@ -104,18 +113,45 @@ void* __cdecl hook_trigger_by_name(const char* name) {
 // A list has a fixed set of row views, and scrolling only changes what they show. So after each
 // scroll the rows are shifted to where the content appeared to be, then eased back to their real
 // positions. Row positions are only set when rows are created, so the shift survives refills.
+// Any way of scrolling counts, whether that's the wheel, the scrollbar or the keyboard.
 
 void* first_row_of(void* list) { return field<void*>(list, kListRows + kVptrlistHead); }
 
-void shift_rows(void* list, float dy) {
+template <typename Visit>
+void for_each_row(void* list, Visit visit) {
+    int index = 0;
     for (void* node = first_row_of(list); node; node = field<void*>(node, kVptrnodeNext)) {
         void* item = field<void*>(node, kVptrnodeData);
         void* view = item ? field<void*>(item, kItemUnit) : nullptr;
-        if (!view) continue;
+        if (view) visit(view, index);
+        ++index;
+    }
+}
+
+float row_pitch(void* list) {
+    return field<float>(list, kListItemHeight) + field<float>(list, kListItemGap);
+}
+
+// Moves every row to `next`, parking any that would land outside the list. Each row's resting
+// place can be worked out from where it is now, because only this ever moves them.
+void place_rows(void* list, Glide* glide, float next) {
+    const float overhang = row_pitch(list) * kRowOverhang;
+    for_each_row(list, [&](void* view, int index) {
+        const uint32_t bit = index < kMaxParkedRows ? 1u << index : 0;
+        const float before = glide->shown + ((glide->parked & bit) ? kParkDistance : 0.0f);
+        const float top = field<float>(view, kViewTop) - before;
+        const float bottom = field<float>(view, kViewBottom) - before;
+
+        const bool fits = !bit || menu_row_fits(top, bottom, next, glide->rows_top,
+                                                glide->rows_bottom, overhang);
+        const float after = next + (fits ? 0.0f : kParkDistance);
+        glide->parked = fits ? glide->parked & ~bit : glide->parked | bit;
+
         void** vtable = field<void**>(view, 0);
         auto offset = reinterpret_cast<ViewOffsetFn>(vtable[kMethodOffset / sizeof(void*)]);
-        offset(view, 0.0f, dy, kMoveDrawnAndHitAreas);
-    }
+        offset(view, 0.0f, after - before, kMoveDrawnAndHitAreas);
+    });
+    glide->shown = next;
 }
 
 Glide* find_glide(void* list) {
@@ -139,22 +175,30 @@ Glide* claim_glide(void* list) {
         }
     }
     *glide = Glide{list, first_row_of(list), 0.0f, now_seconds()};
+
+    // No glide is under way on this list, so its rows are all at rest.
+    bool first = true;
+    for_each_row(list, [&](void* view, int) {
+        const float top = field<float>(view, kViewTop);
+        const float bottom = field<float>(view, kViewBottom);
+        glide->rows_top = first || top > glide->rows_top ? top : glide->rows_top;
+        glide->rows_bottom = first || bottom < glide->rows_bottom ? bottom : glide->rows_bottom;
+        first = false;
+    });
     return glide;
 }
 
 void start_glide(void* list, int first_before) {
     const int first_after = field<int>(list, kListFirstItem);
     const int columns = field<int>(list, kListColumns);
-    const float pitch = field<float>(list, kListItemHeight) + field<float>(list, kListItemGap);
+    const float pitch = row_pitch(list);
     if (first_after == first_before || first_before < 0 || first_after < 0) return;
     if (columns <= 0 || pitch <= 0.0f) return;
 
     // Layout coordinates run upward, so scrolling down starts the rows one step lower.
     const float rows = static_cast<float>(first_after - first_before) / columns;
     Glide* glide = claim_glide(list);
-    const float wanted = menu_glide_add(glide->shown, -rows * pitch, pitch);
-    shift_rows(list, wanted - glide->shown);
-    glide->shown = wanted;
+    place_rows(list, glide, menu_glide_add(glide->shown, -rows * pitch, pitch));
     glide->last_step = now_seconds();
 }
 
@@ -173,8 +217,7 @@ void step_glide(void* list) {
 
     const float next = menu_glide_step(glide->shown, static_cast<float>(seconds),
                                        g_cfg.menu_scroll_smoothing_ms / 1000.0f);
-    shift_rows(list, next - glide->shown);
-    glide->shown = next;
+    place_rows(list, glide, next);
     if (next == 0.0f) *glide = Glide{};
 }
 
@@ -183,10 +226,14 @@ void __fastcall hook_list_handler(void* list, void*) {
     step_glide(list);
 }
 
+// The wheel moves the list's slider, which comes back here as a second action inside the first,
+// so only the outermost one starts a glide.
 bool __fastcall hook_list_action(void* list, void*, void* source, int type, void* param) {
     const int first_before = field<int>(list, kListFirstItem);
+    ++g_list_action_depth;
     const bool handled = g_real_list_action(list, source, type, param);
-    if (type >= kActionWheelFirst && type <= kActionWheelLast) start_glide(list, first_before);
+    --g_list_action_depth;
+    if (g_list_action_depth == 0) start_glide(list, first_before);
     return handled;
 }
 
@@ -235,6 +282,12 @@ float menu_glide_step(float shown, float seconds, float time_constant) {
 float menu_glide_add(float shown, float delta, float limit) {
     const float wanted = shown + delta;
     return wanted > limit ? limit : (wanted < -limit ? -limit : wanted);
+}
+
+bool menu_row_fits(float top, float bottom, float shift, float rows_top, float rows_bottom,
+                   float overhang) {
+    return shift == 0.0f ||
+           (top + shift <= rows_top + overhang && bottom + shift >= rows_bottom - overhang);
 }
 
 void menu_attach_game(HMODULE game, bool verified) {

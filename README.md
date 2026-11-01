@@ -18,6 +18,9 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | Aim speed changes with frame rate, because mouse movement is multiplied by frame time | Aim speed stays the same at any frame rate |
 | The game clock ticks in whole milliseconds, which causes stutter at high refresh rates | Sub-millisecond clock |
 | Wide screens crop the top and bottom of the view | Proper Hor+ field of view |
+| No anti-aliasing, and jagged leaves and grass | Up to 8x anti-aliasing, including foliage edges, and 16x texture filtering |
+| Grass and trees pop in close to you | Grass out to 85 m, and trees that keep their detail up to 3x further |
+| A flat, soft image by modern standards | Optional sharpening, richer colour and bloom, which leave the HUD alone |
 | Menus and HUD are stretched on wide screens | Correct proportions, with menus centred and their backgrounds filling the sides |
 | The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |
 | Scopes and fades only cover the middle of a wide screen | Scopes, binoculars, flashes and eyelids reach the screen edges |
@@ -84,9 +87,7 @@ reg add "HKCU\Software\Microsoft\GameBar" /v UseNexusForGameBarEnabled /t REG_DW
 
 - Only tested on one PC so far, with the Steam build.
 - The Steam overlay hasn't been tested with Longshot, so Steam's own screenshots may not work.
-- Menu lists glide with the mouse wheel, but not when dragging the scrollbar, and rows can briefly
-  overlap nearby UI as they move.
-- Anything the game draws over the world, like markers, hasn't been checked on wide screens.
+- Distant trees and fine edges can still shimmer, even at 8x anti-aliasing.
 
 ## Reporting a problem
 

@@ -66,6 +66,20 @@ bool patch_bytes(void* at, const void* expected, const void* replacement, size_t
     return true;
 }
 
+bool patch_call(void* site, const void* target, const void* hook) {
+    constexpr uint8_t kCall = 0xE8;
+    const auto relative = [site](const void* to) {
+        return static_cast<int32_t>(static_cast<const char*>(to) - (static_cast<const char*>(site) + 5));
+    };
+    uint8_t expected[5] = {kCall};
+    uint8_t replacement[5] = {kCall};
+    const int32_t was = relative(target);
+    const int32_t now = relative(hook);
+    memcpy(expected + 1, &was, sizeof(was));
+    memcpy(replacement + 1, &now, sizeof(now));
+    return patch_bytes(site, expected, replacement, sizeof(expected));
+}
+
 bool write_jump(void* at, void* to) {
     DWORD old = 0;
     if (!VirtualProtect(at, 5, PAGE_EXECUTE_READWRITE, &old)) return false;

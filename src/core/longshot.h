@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace longshot {
@@ -25,6 +26,14 @@ struct Config {
     float menu_scroll_smoothing_ms = 45.0f;
     UiLayout ui_layout = UiLayout::Center43;
     HudLayout hud_layout = HudLayout::Edges;
+    int anti_aliasing = 0;
+    bool smooth_foliage = true;
+    int texture_filtering = 0;
+    float grass_distance = 0.0f;
+    float lod_distance = 1.0f;
+    float sharpening = 0.0f;
+    float vibrance = 0.0f;
+    float bloom = 0.0f;
 
     bool raw_input = true;
     bool fps_independent = true;
@@ -72,6 +81,8 @@ void config_write(const wchar_t* section, const wchar_t* key, const char* value)
 bool iat_patch(HMODULE mod, const char* dll, const char* func, void* hook, void** original);
 // Replaces the start of a function that will never be called again with a jump.
 bool write_jump(void* at, void* to);
+// Swaps a call to a fixed address for one to the hook, leaving the function whole for other callers.
+bool patch_call(void* site, const void* target, const void* hook);
 // Redirects one entry of a table of method pointers.
 bool vtable_patch(void** slot, void* hook, void** original);
 // Overwrites code, but only if it still holds exactly the expected bytes.
@@ -86,17 +97,65 @@ void crash_install();
 void timing_install(HMODULE p3core);
 double now_seconds();
 
+// profile.cpp
+// Sections are timed separately, so a slow frame in the log says where its time went. Files,
+// Uploads and Post happen inside the others, and are counted on their own as well.
+enum class ProfileSection { Sim, World, Ui, Swap, Sound, Files, Uploads, Post, Count };
+
+class ProfileTimer {
+   public:
+    explicit ProfileTimer(ProfileSection section);
+    ~ProfileTimer();
+
+   private:
+    ProfileSection section_;
+    double started_;
+};
+
+void profile_attach_module(HMODULE mod);
+void profile_attach_game(HMODULE game, bool verified);
+void profile_game_ready();
+void* profile_wrap_gl(const char* name, void* proc);
+void profile_ui_begin();
+void profile_ui_end();
+bool profile_is_slow(float frame_ms, float typical_ms);
+void profile_frame_done(float frame_ms, float typical_ms, bool focused);
+void profile_report_window();
+
 // menu.cpp
 void menu_attach_game(HMODULE game, bool verified);
 void menu_game_ready();
 float menu_glide_step(float shown, float seconds, float time_constant);
 float menu_glide_add(float shown, float delta, float limit);
+// True if a row at rest between `top` and `bottom` stays with the rest of its list after `shift`.
+bool menu_row_fits(float top, float bottom, float shift, float rows_top, float rows_bottom,
+                   float overhang);
 
 // layout.cpp
 void layout_install(HMODULE p3core, HMODULE p3shared);
 // The text a layout file should have at this aspect, or empty to leave it as it is.
 std::string layout_rewrite(const char* path, const std::string& original, float aspect,
                            HudLayout hud);
+
+// graphics.cpp
+void graphics_attach_gl(HMODULE gl);
+void* graphics_wrap_gl(const char* name, void* proc);
+// The sample count a window could get, or 0. Needs a window with no pixel format yet.
+int graphics_test_multisample(HDC dc, int samples);
+// Runs `work` with a throwaway OpenGL context current, on a hidden window `size` pixels square.
+void graphics_in_context(int size, int samples, const std::function<void()>& work);
+
+// detail.cpp
+void detail_attach_game(HMODULE game, bool verified);
+void detail_settings_changed();
+float detail_scale(float reference_fov, float fov, float multiplier);
+float detail_grass_radius(float visible);
+
+// post.cpp
+// Runs after the world is drawn and before the UI, so it never touches the HUD or menus.
+void post_render();
+// 0 if the effects work on this PC's driver, or which check failed.
+int post_test();
 
 // sound.cpp
 void sound_attach_ds8(HMODULE ds8, bool verified);
@@ -120,6 +179,8 @@ void display_settings_changed();
 
 // view.cpp
 void view_attach_game(HMODULE game, bool verified);
+// The field of view the game asked for, before Longshot widens it, or 0 for any other frustum.
+float view_game_fov(const void* frustum);
 void view_per_frame();
 float view_adjust_fov(float fov, float aspect);
 float view_ui_to_pixel(float x, float left, float right, int width);

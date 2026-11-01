@@ -16,7 +16,6 @@ Still to confirm with longer play:
 - whether anything in the game misbehaves at high frame rates
 - whether the crashes and hitching seen on the original return
 - whether terrain, grass or tree culling needs the wider FOV too
-- whether world-to-UI overlays follow the wider UI rect
 
 ## 2. Full player settings
 
@@ -31,24 +30,31 @@ Done:
 
 ## 3. Performance and stability
 
-Driven by the logs from stage 1, since those show where the time goes:
+The logs now split every frame into its parts, list each slow frame, and report memory use. On the
+first test PC that showed almost nothing to fix: an 11 minute hunt held 165 FPS, with about 2.5 ms of
+work a frame, and every slow frame had a known cause, like a screenshot or loading a map. See
+[engine-notes.md](engine-notes.md).
 
-- fix the crash causes
-- reduce hitching from synchronous loading and from audio
-- reduce draw calls in dense forest
+So the rest waits for logs from other PCs, since those will show what's worth doing:
+
+- fix any crashes that turn up
+- reduce hitching from loading and audio, if it shows on slower drives
+- reduce draw calls in dense forest, if weaker PCs need it
 - large address aware support, if memory limits turn out to matter
 
-## 4. New renderer
+## 4. Graphics
 
-Replace `lib/gl.dll`, the swappable OpenGL plugin, with a modern renderer that keeps the game's
-art. It starts by matching the original image, then adds optional effects, each with a toggle:
+Modern graphics that keep the game's art, each with a toggle.
 
-- proper anti-aliasing and anisotropic filtering
-- longer draw distance and better shadows
-- ambient occlusion
-- better water and lighting
+Done:
 
-The renderer will be built to stand on its own, so it can carry over to stage 5.
+- Up to 8x anti-aliasing, including the edges of foliage
+- Up to 16x texture filtering
+- Grass out to 85 m, and trees that keep their detail further out
+- Sharpening, richer colour and bloom
+
+Later: stronger anti-aliasing for the shimmer on distant trees and fine edges, through supersampling
+or something like FSR or DLAA.
 
 ## 5. Standalone engine
 

@@ -309,9 +309,20 @@ int main() {
     auto test_layout = reinterpret_cast<LayoutFn>(GetProcAddress(core, "longshot_test_layout"));
     auto test_pause = reinterpret_cast<PauseFn>(GetProcAddress(core, "longshot_test_pause"));
     auto test_turn = reinterpret_cast<TurnFn>(GetProcAddress(core, "longshot_test_turn"));
+    auto test_row_fits = reinterpret_cast<int(__cdecl*)(float, float, float, float, float, float)>(
+        GetProcAddress(core, "longshot_test_row_fits"));
+    auto test_slow =
+        reinterpret_cast<int(__cdecl*)(float, float)>(GetProcAddress(core, "longshot_test_slow"));
+    auto test_multisample =
+        reinterpret_cast<int(__cdecl*)(HDC, int)>(GetProcAddress(core, "longshot_test_multisample"));
+    auto test_post = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_post"));
+    auto test_detail =
+        reinterpret_cast<float(__cdecl*)(float, float, float)>(GetProcAddress(core, "longshot_test_detail"));
+    auto test_grass = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_grass"));
     const bool exports = test_iat && test_fov && test_raw && read_raw && count_raw && test_ui &&
                          test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
-                         test_pause && test_turn;
+                         test_pause && test_turn && test_row_fits && test_slow &&
+                         test_multisample && test_post && test_detail && test_grass;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -345,6 +356,49 @@ int main() {
     near_check("list glide snaps home when nearly there", test_glide(0.2f, 0.001f, 0.045f), 0.0f);
     near_check("list glide never overshoots a row", test_glide_add(-20.0f, -30.0f, 30.0f), -30.0f);
     near_check("list glide reverses cleanly", test_glide_add(-20.0f, 30.0f, 30.0f), 10.0f);
+
+    // Rows 20 tall in a list reaching from 0 to 100, with up to 5 allowed to poke out.
+    check("rows at rest always stay", test_row_fits(100.0f, 80.0f, 0.0f, 100.0f, 0.0f, 5.0f) == 1);
+    check("a middle row stays while gliding",
+          test_row_fits(60.0f, 40.0f, -18.0f, 100.0f, 0.0f, 5.0f) == 1);
+    check("a row leaving the bottom is parked",
+          test_row_fits(20.0f, 0.0f, -18.0f, 100.0f, 0.0f, 5.0f) == 0);
+    check("a row leaving the top is parked",
+          test_row_fits(100.0f, 80.0f, 18.0f, 100.0f, 0.0f, 5.0f) == 0);
+    check("a nearly settled row comes back",
+          test_row_fits(20.0f, 0.0f, -4.0f, 100.0f, 0.0f, 5.0f) == 1);
+
+    check("a normal frame isn't slow", test_slow(6.1f, 6.06f) == 0);
+    check("a frame past twice the usual is slow", test_slow(13.0f, 6.06f) == 1);
+    check("nothing is slow before there's a usual time", test_slow(500.0f, 0.0f) == 0);
+
+    // Asks this PC's real driver, through a window that's never shown.
+    HWND window = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 16, 16, nullptr, nullptr, nullptr,
+                                  nullptr);
+    HDC dc = window ? GetDC(window) : nullptr;
+    for (const int samples : {2, 4, 8}) {
+        const int got = dc ? test_multisample(dc, samples) : 0;
+        fprintf(g_out, "INFO  asked for %dx anti-aliasing, the driver offers %dx\n", samples, got);
+        check("the driver offers anti-aliasing", got >= 2 && got <= samples);
+    }
+    if (dc) ReleaseDC(window, dc);
+    if (window) DestroyWindow(window);
+
+    const auto about = [](float value, float wanted) {
+        const float gap = value - wanted;
+        return gap > -0.01f && gap < 0.01f;
+    };
+    check("detail ranges are the game's own at 80 degrees", about(test_detail(80.0f, 80.0f, 1.0f), 1.0f));
+    check("zooming in extends them, as in the game", about(test_detail(80.0f, 40.0f, 1.0f), 2.31f));
+    check("and LOD distance multiplies them", about(test_detail(80.0f, 80.0f, 2.0f), 2.0f));
+    check("LOD distance can't reach zero", test_detail(80.0f, 80.0f, 0.0f) > 0.2f);
+    check("grass keeps the game's fade by default", about(test_grass(0.0f), 30.0f));
+    check("grass at Far stays inside the game's reach", test_grass(47.0f) * 0.805f < 47.9f);
+    check("grass stops at the widened reach", test_grass(1000.0f) * 0.805f < 85.1f);
+
+    const int post = test_post();
+    fprintf(g_out, "INFO  post-processing check result: %d\n", post);
+    check("post-processing works on this driver", post == 0);
 
     pause_checks(test_pause);
     turn_checks(test_turn);

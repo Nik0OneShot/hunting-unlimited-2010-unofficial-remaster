@@ -72,7 +72,7 @@ def string_table(path):
 def constants(text):
     return {
         m.group(1): int(m.group(2), 16)
-        for m in re.finditer(r"constexpr (?:uint32_t|size_t) (\w+) = (0x[0-9a-fA-F]+);", text)
+        for m in re.finditer(r"constexpr (?:uint32_t|uintptr_t|size_t) (\w+) = (0x[0-9a-fA-F]+);", text)
     }
 
 
@@ -116,6 +116,7 @@ def main():
         ("p3core.dll", "kernel32.dll", "LoadLibraryA"),
         ("gl.dll", "user32.dll", "ChangeDisplaySettingsA"),
         ("gl.dll", "gdi32.dll", "SwapBuffers"),
+        ("gl.dll", "gdi32.dll", "SetPixelFormat"),
         ("gl.dll", "kernel32.dll", "GetProcAddress"),
         ("di8.dll", "dinput8.dll", "DirectInput8Create"),
         ("game.dll", "p3shared.dll", names["kUiInit"]),
@@ -147,6 +148,62 @@ def main():
     for caller, kind in ((0x1c3a, "layouts"), (0x28d9f, "templates")):
         call = shared.disasm(caller, 5)[0]
         report(int(call.op_str, 0) == shared.base + 0x31a60, f"{kind} are read with decipher_file")
+
+    print("--- frame timing")
+    profile = constants(source("profile.cpp"))
+    profile_names = {
+        m.group(1): m.group(2) for m in re.finditer(r'constexpr char (\w+)\[\] =\s*"([^"]+)"', source("profile.cpp"))
+    }
+    timed = bins["game.dll"]
+    frame_slot = profile["kGameVtable"] + profile["kMethodFrame"]
+    report(struct.unpack_from("<I", timed.image, frame_slot)[0] == timed.base + 0x1034c0, "the game object's frame method is where expected")
+    render_call = timed.disasm(profile["kRenderCall"], 5)[0]
+    report(render_call.mnemonic == "call" and render_call.size == 5, "the frame calls its render function here")
+    report(int(render_call.op_str, 0) == timed.base + profile["kRender"], "and that is kRender")
+    report(
+        any(f"0x{timed.imports[('p3shared.dll', names['kUiProcess'])]:x}" in i.op_str for i in timed.disasm(profile["kRender"], 0x400)),
+        "the render function draws the UI",
+    )
+    sound_name = bytes(timed.image).find(b"snd_update_state\0")
+    binding = [i for i in timed.disasm(0x100ec0, 0x40)]
+    report(
+        any(i.op_str == f"dword ptr [{hex(timed.base + profile['kSlotSoundUpdate'])}], eax" for i in binding) and sound_name > 0,
+        "kSlotSoundUpdate holds snd_update_state",
+    )
+    for key in ("kFsOpen", "kFileRead", "kFileBlockRead"):
+        report(profile_names[key] in bins["p3core.dll"].exports, f"p3core exports {key}")
+    gl_text = bytes(bins["gl.dll"].image)
+    for name in (b"glTexImage2D", b"glTexSubImage2D", b"glCompressedTexImage2DARB", b"glBufferDataARB",
+                 b"glEnable", b"glDisable", b"glTexParameterf", b"glTexParameteri"):
+        report(name + b"\0" in gl_text, f"gl.dll looks up {name.decode()}")
+
+    print("--- world draw")
+    view_values = constants(source("view.cpp"))
+    world_game = bins["game.dll"]
+    draw_call = world_game.disasm(view_values["kWorldDrawCall"], 5)[0]
+    report(
+        draw_call.mnemonic == "call" and draw_call.op_str == hex(world_game.base + view_values["kDrawQueues"]),
+        "the frame draws the world where expected",
+    )
+
+    print("--- distances")
+    detail_text = source("detail.cpp")
+    detail = constants(detail_text)
+    distance_image = bytes(bins["game.dll"].image)
+    def float_at(offset):
+        return struct.unpack_from("<f", distance_image, offset)[0]
+    report(distance_image[detail["kDetailScale"]:].startswith(bytes.fromhex("d944240483c148")),
+           "the detail scale starts as expected")
+    report(float_at(detail["kTileRadiusBase"]) == 10.0, "the tree tile radius starts from 10")
+    for name in ("kGrassFadeX", "kGrassFadeZ"):
+        report(abs(float_at(detail[name]) - 1 / 30) < 1e-6, f"{name} is the fade's 1/30")
+    rows = re.findall(r"\{(0x[0-9a-f]+), \{([^}]*)\}, \{([^}]*)\}, (\d)\}", detail_text)
+    report(len(rows) == 6, "every grass patch was read from detail.cpp")
+    for at, stock, wide, size in rows:
+        stock_bytes = bytes(int(value, 16) for value in stock.split(","))
+        wide_bytes = bytes(int(value, 16) for value in wide.split(","))
+        report(distance_image[int(at, 16):].startswith(stock_bytes), f"grass bytes at {at} are the game's")
+        report(len(stock_bytes) == len(wide_bytes) == int(size), f"and its patch is {size} bytes")
 
     print("--- options menu")
     settings = constants(source("settings.cpp"))

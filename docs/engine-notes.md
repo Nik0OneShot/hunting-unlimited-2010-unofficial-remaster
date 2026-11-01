@@ -250,8 +250,8 @@ The world camera builds its projection from the full window size, never from tha
 panel gets the full window's aspect. Stock 4:3 hid this because the panel is nearly 4:3 too. Longshot
 passes the viewport's aspect explicitly instead.
 
-Still to check: other `ui_get_reference_mode` users in `game.dll` convert between world and UI space with
-the plain reference size, for example at `+0xabb0`, so anything using them may not follow the wider rect.
+The camera's conversions between world and UI space, at `+0xabb0` and `+0xae30`, use the plain reference size,
+so they wouldn't follow the wider rect. Only the map editor calls them, in `emainhdl.cpp`, so hunts aren't affected.
 
 The engine never clears the colour buffer, since the world or a UI background always covers it. It also
 renders environment cube map faces into the back buffer's bottom-left corner, then copies them out. With a
@@ -339,10 +339,131 @@ A list keeps a fixed set of row views in a `vptrlist_t` at `+0x100`. They are po
 at `top - index * (item_height + item_gap)`. Scrolling only sets the first item index at `+0x114` and refills
 the rows, so there is no per-pixel scrolling to drive.
 
-Longshot hooks those two vtable entries. After a wheel scroll it shifts the rows back by the distance
-scrolled, then eases them to their real positions from the list's own `handler`, so the animation stops by
-itself if the list goes away. The shift is capped at one row, because rows aren't clipped to the list and
-would otherwise draw over nearby UI.
+Longshot hooks those two vtable entries. After any action that changes the first item, it shifts the rows back by
+the distance scrolled, then eases them to their real positions from the list's own `handler`, so the animation
+stops by itself if the list goes away. The wheel moves the slider, which arrives as a second action inside the
+first, so only the outermost one counts.
+
+Rows aren't clipped to the list. The shift is capped at one row, and a row that would land outside the list moves
+far off-screen until it fits again. Hiding it instead would disturb focus, and the list's own hiding of empty rows.
+
+## Renderer
+
+`lib/gl.dll` picks a technique for each material from `r_path`, and 5 is `ARB2`. Materials point at `.rfx` effect
+files, 589 of them, which list a technique per path. For ARB2 those are `arb2.vp` and `arb2.fp`: ARB assembly compiled
+from Cg, stored as plain text in `base.scs`, so the file hook can rewrite them. The folders under `effect/hu4/` cover
+diffuse, specular, normal and offset mapping, environment maps, terrain with up to three layers, and water.
+
+Nothing uses framebuffer objects. The frame goes straight to the back buffer, and environment cube faces are drawn
+there and copied out. The window's pixel format comes from `ChoosePixelFormat` and `SetPixelFormat` in `gl.dll`'s
+imports, with no multisampling, so the game has no anti-aliasing of its own.
+
+Longshot replaces `SetPixelFormat`. For the game's window, and not the tiny one it makes to probe the driver, it swaps
+in a multisampled format from `wglChoosePixelFormatARB`, which needs a throwaway context to fetch. Trees and grass are
+cut out with the alpha test, which multisampling can't smooth, so Longshot also turns on alpha to coverage whenever the
+alpha test is on and blending is off. It tracks both through `glEnable` and `glDisable`.
+
+Texture filtering is set per texture with `GL_TEXTURE_MAX_ANISOTROPY_EXT`, and Longshot overrides that value in
+`glTexParameterf` and `glTexParameteri`. All of these reach `gl.dll` through `GetProcAddress`, so they can be wrapped by name.
+
+`ui_process` runs after the world and before the UI, with the context current, so Longshot runs its post-processing
+there, on hunt frames that drew the world. It copies the frame into a texture, which resolves any multisampling, then draws over the
+frame with its own shaders, so the game's drawing and the HUD are left alone. It uses framebuffer objects only for
+its own bloom passes. The game keeps its state in sync by itself, so everything changed has to go back exactly:
+`glPushAttrib` covers nearly all of it, and the current program and framebuffer are saved by hand. With every effect
+off, none of this runs. The self-test runs the effects on the real driver, on a hidden window's back buffer with and
+without multisampling, then checks the pixels and that the state came back. Sharpening has to be tested on grey,
+because contrast adaptive sharpening does nothing beside pure white, by design.
+
+A frame is drawn in this order, in `game.dll`:
+
+1. The context clears colour, depth and stencil.
+2. The sky, with its own camera (near 0.01, far 2) at the origin. Then depth and stencil are cleared.
+3. The world, with the main camera. Its near and far planes vary, and the frame's first
+   `r_frustum_projection_matrix` call builds it, at return address `+0x5c0e`.
+4. Depth and stencil are cleared, and the weapon is drawn with a third camera (near 0.1, far 1000). This step is
+   skipped for some views, and its clear with it.
+5. Depth and stencil are cleared again, and `ui_process` runs.
+
+So depth is gone by the time the UI starts. Each of those draws goes through the same nine queues, one at a time, in
+`shaderlib_queue_render_and_flush` at `+0x1560a0`. Queues 0 and 1 are sorted one way, and the rest another. Materials
+pick theirs in their pass's setup: `hu_dif`, `hu_dif_spec` and the terrain use queue 0, and `hu_dif_opac`,
+`hu_dif_opac_attn` and `hu_water` use queue 6. That's every material with see-through edges, so grass, leaves, bushes
+and water all come after everything solid.
+
+The reflection cube at `+0x5f00` builds its camera through the same `+0x5580`, with a field of view of 90 and depth from
+1 to 100, one face at a time for a run of frames after the view moves. Its rectangle is only as big as its texture,
+which is how to tell it from the world's.
+
+The camera setup at `+0x5580` doesn't run on every frame. In one test it missed 8 to 21% of them while moving and none
+while standing still, so nothing that has to happen every frame can depend on it. Longshot tells that the world was
+drawn from the frame's own call at `+0x102f99`.
+
+The engine's matrices keep rows together, so element 11 is the one a column-major matrix calls 14. The projection is a
+standard OpenGL one with a horizontal field of view: `away = m[11] / (ndc + m[10])`. Copying the depth buffer with
+`glCopyTexSubImage2D` works on a multisampled back buffer, even with real geometry and a stencil buffer.
+
+- Anisotropic filtering is in the Graphics menu, as `r_anisotropy_factor`, a fraction of the driver's maximum. The
+  default of 0.25 is 4x on a 16x card. Longshot's own setting overrides it, without changing the game's.
+- `g_shadows` is only read in two places, both testing for 1 or 3, before drawing `animal_shadow.mat` as a decal.
+  No sun shadows have turned up, so there seems to be no shadow map to improve.
+- `g_water_quality` turns on a reflection cube. Water doesn't show the scene around it in any other way.
+- `g_zclip`, `g_tree_lodswitch` and `g_grass_density` look unused, because their readers aren't where they're used.
+  Each cvar has a validator at `cvar+0x64`, which `cvar_t::set` calls, and that stores a float in a global of its own
+  at `+0x1e4004`, `+0x1e4008` and `+0x1e400c`. See Distances.
+
+## Distances
+
+**View distance** is `g_zclip`, and the far plane is `(1 - z) * 300 + z * 1700`. The slider works, tops out at 1700 m,
+and has nothing to do with grass or trees.
+
+**Grass** is drawn from 20 m blocks, walking 3 blocks either way around the camera and skipping any over 62 m away. But
+what actually limits it is a shader. Every grass material is `hu.dif_opac_attn`, which projects `attn.png` over a disc
+30 m in radius, and the alpha test cuts it at 0.3, which is at 24 m. The 1/30 lives in two floats in `.data`, each with
+one reader, so they can be changed while the game runs. Past 47 m the square edges of the blocks would show, so the
+walk and the 62 m have to grow too. Blocks are found by key and not by position in a grid, so that can't overflow.
+They're built on the main thread, and kept in a cache of 98, which has to grow with them. `grass.sii` has no distance
+in it.
+
+**Trees** are the only thing with level of detail. Everything else is always drawn. Per plant, with `v` for
+`g_tree_lodswitch` and `s` for the scale below, `dist / s` under `50 * (1 + v)` is the full model, under `70 * (1 + v)`
+is a crossfade, and past that is a billboard. Whole tiles go through another test first: any tile further than
+`(10 + 70v) * s` draws only billboards, with no fade. That's 60 m short of where the plants finish fading, so trees
+pop there. Longshot starts it from 80 instead of 10.
+
+`s` is `tan(40) / tan(fov / 2)`, which is meant to make scopes keep their detail, and it also drives animals, whose
+thresholds are 35 and 85 m. It reads the frustum's field of view, so widening that for wide screens shrinks every range:
+at 3440x1440 the full model stopped at 56 m instead of 100. Longshot replaces the function at `+0xd01d0` with one that
+uses the game's own field of view, and multiplies it by `lod_distance`.
+
+## Frame timing
+
+The engine creates no threads of its own, so a file read or a texture upload holds up the frame until it finishes.
+
+The game object's frame method is at vtable `+0x04`. It advances the world, then calls the render function at
+`game.dll+0x102df0` from `+0x10360d`, which draws the world, calls `ui_process`, and swaps. It then calls
+`snd_update_state`. Other callers of the render function are the loading screens, so Longshot only replaces that
+one call.
+
+Each frame is split into `sim`, `world`, `ui`, `swap` and `sound`, and `post` sits inside `ui`. `swap` includes the frame limiter and waiting for
+vsync, so a large one on its own usually means spare time, not a problem. `files` and `uploads` sit inside the others,
+and are counted separately: `files` covers `fs_open`, `read` and `block_read` in every module, and `uploads` covers
+`glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2DARB` and `glBufferDataARB`.
+
+Every 10 seconds the log gets the averages and the memory in use, and any frame over twice the usual length gets
+its own line, with `other` for time outside every section.
+
+An 11 minute hunt at 3440x1440 and 165 FPS averaged about 0.3 ms in `sim`, 2 ms in `world` and 0.1 ms in `ui`, and
+touched almost no files once it had loaded, because everything is loaded up front. Each known cause of a slow frame:
+
+| Frame | Cause |
+| --- | --- |
+| Up to 230 ms | Loading a map, with most of it in `files` |
+| About 135 ms in `ui` | The Sound tab listing audio devices, logged as `[snd] device count` |
+| About 65 ms, then up to 25 ms in `swap` | The screenshot command reading the frame back and saving it, uncompressed |
+| About 40 ms in `world` | Once, 10 seconds into a hunt |
+| About 20 ms in `sound` | Once, starting a sound |
+| Up to 25 ms in `swap` | Coming back from alt-tab |
 
 ## Ruled out
 

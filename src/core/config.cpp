@@ -69,6 +69,14 @@ void config_load() {
         read_float(L"view", L"menu_scroll_smoothing_ms", g_cfg.menu_scroll_smoothing_ms);
     read_str(L"view", L"ui_layout", text, sizeof(text));
     if (!_stricmp(text, "stretch")) g_cfg.ui_layout = UiLayout::Stretch;
+    g_cfg.anti_aliasing = read_int(L"view", L"anti_aliasing", g_cfg.anti_aliasing);
+    g_cfg.smooth_foliage = read_bool(L"view", L"smooth_foliage", g_cfg.smooth_foliage);
+    g_cfg.texture_filtering = read_int(L"view", L"texture_filtering", g_cfg.texture_filtering);
+    g_cfg.grass_distance = read_float(L"view", L"grass_distance", g_cfg.grass_distance);
+    g_cfg.lod_distance = read_float(L"view", L"lod_distance", g_cfg.lod_distance);
+    g_cfg.sharpening = read_float(L"view", L"sharpening", g_cfg.sharpening);
+    g_cfg.vibrance = read_float(L"view", L"vibrance", g_cfg.vibrance);
+    g_cfg.bloom = read_float(L"view", L"bloom", g_cfg.bloom);
     read_str(L"view", L"hud_layout", text, sizeof(text));
     if (!_stricmp(text, "16_9")) g_cfg.hud_layout = HudLayout::Wide169;
     else if (!_stricmp(text, "4_3")) g_cfg.hud_layout = HudLayout::Center43;
@@ -106,6 +114,10 @@ void config_load() {
          g_cfg.sensitivity_y, static_cast<int>(g_cfg.zoom_mode), g_cfg.cm_per_360, g_cfg.mouse_dpi);
     logf("config: high_res_timer=%d pause_in_background=%d", g_cfg.high_res_timer,
          g_cfg.pause_in_background);
+    logf("config: anti_aliasing=%d smooth_foliage=%d texture_filtering=%d sharpening=%.2f "
+         "vibrance=%.2f bloom=%.2f",
+         g_cfg.anti_aliasing, g_cfg.smooth_foliage, g_cfg.texture_filtering, g_cfg.sharpening,
+         g_cfg.vibrance, g_cfg.bloom);
 }
 
 }  // namespace longshot

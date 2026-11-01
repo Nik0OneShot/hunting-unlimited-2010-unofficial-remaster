@@ -12,6 +12,10 @@ namespace longshot {
 
 namespace {
 
+// The frame's call to draw the world, and the function it calls.
+constexpr uintptr_t kWorldDrawCall = 0x102f99;
+constexpr uintptr_t kDrawQueues = 0x1560a0;
+
 constexpr char kSetFov[] = "?set_fov@frustum_t@prism@@QAEXM@Z";
 constexpr char kProjection[] =
     "?r_frustum_projection_matrix@prism@@YAXQAV?$mat_sq_t@M$03@1@ABV?$rectangle_t@M@1@MMMM@Z";
@@ -64,6 +68,7 @@ constexpr float kMaxFov = 170.0f;
 
 using SetFovFn = void(__thiscall*)(void*, float);
 using ProjectionFn = void(__cdecl*)(void*, const float*, float, float, float, float);
+using DrawQueuesFn = void(__cdecl*)(void*);
 using UiInitFn = void(__cdecl*)();
 using UiProcessFn = void(__cdecl*)(void*);
 using CvarSetFn = bool(__thiscall*)(void*, const char*);
@@ -93,7 +98,10 @@ bool g_verified = false;
 bool g_ui_ready = false;
 float g_ui_rect[4] = {};
 bool g_ui_rect_valid = false;
+const void* g_world_frustum = nullptr;
+float g_game_fov = 0.0f;
 bool g_world_drawn = false;
+bool g_world_finished = false;
 void* g_hud_window = nullptr;
 bool g_in_hunt = false;
 bool g_background_paused = false;
@@ -148,6 +156,8 @@ const float* main_viewport() {
 void __fastcall hook_set_fov(void* frustum, void*, float fov) {
     const float shown = update_zoom(fov);
     input_set_fov(shown);
+    g_world_frustum = frustum;
+    g_game_fov = shown;
     g_real_set_fov(frustum, view_adjust_fov(shown, g_mode.aspect));
 }
 
@@ -175,6 +185,12 @@ void __cdecl hook_projection(void* matrix, const float* rect, float near_plane, 
         }
     }
     g_real_projection(matrix, rect, near_plane, far_plane, view_adjust_fov(fov, effective), aspect);
+}
+
+// Camera setup doesn't run on every frame, so this is the only sure sign the world was drawn.
+void __cdecl hook_draw_world(void* context) {
+    reinterpret_cast<DrawQueuesFn>(g_game + kDrawQueues)(context);
+    g_world_finished = true;
 }
 
 // The engine scales UI rectangles to pixels here without consulting the UI rect, so 3D
@@ -294,6 +310,7 @@ void __cdecl hook_ui_init() {
         apply_video_mode();
         input_game_ready();
         menu_game_ready();
+        profile_game_ready();
     }
     compute_ui_rect();
     view_per_frame();
@@ -301,11 +318,18 @@ void __cdecl hook_ui_init() {
 
 // The game draws the whole UI here, once a frame, after the world.
 void __cdecl hook_ui_process(void* context) {
+    profile_ui_begin();
+    const bool world_shown = g_in_hunt && g_world_finished;
+    g_world_finished = false;
     display_before_ui();
+    if (world_shown) post_render();
     g_real_ui_process(context);
+    profile_ui_end();
 }
 
 }  // namespace
+
+float view_game_fov(const void* frustum) { return frustum == g_world_frustum ? g_game_fov : 0.0f; }
 
 float view_adjust_fov(float fov, float aspect) {
     if (g_cfg.fov_mode != FovMode::HorPlus) return fov;
@@ -374,6 +398,12 @@ void view_attach_game(HMODULE game, bool verified) {
         g_ui_set_rect = reinterpret_cast<UiSetRectFn>(GetProcAddress(shared, kUiSetRect));
         g_ui_reference_mode =
             reinterpret_cast<UiReferenceModeFn>(GetProcAddress(shared, kUiReferenceMode));
+    }
+
+    if (verified) {
+        const bool world = patch_call(g_game + kWorldDrawCall, g_game + kDrawQueues,
+                                      reinterpret_cast<const void*>(&hook_draw_world));
+        logf("view: world draw hook %s", world ? "installed" : "FAILED");
     }
 
     const bool ui = iat_patch(game, "p3shared.dll", kUiInit, reinterpret_cast<void*>(&hook_ui_init),
