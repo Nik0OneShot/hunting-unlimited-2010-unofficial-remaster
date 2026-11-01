@@ -120,7 +120,7 @@ void view_update_background_pause();
 int view_background_pause_step(bool* ours, bool in_hunt, bool focused, bool game_paused);
 
 // input.cpp
-void input_attach_di8(HMODULE di8);
+void input_attach_di8(HMODULE di8, bool verified);
 void input_attach_game(HMODULE game, bool verified);
 void input_game_ready();
 void input_set_fov(float game_fov_degrees);

@@ -148,6 +148,32 @@ def main():
         call = shared.disasm(caller, 5)[0]
         report(int(call.op_str, 0) == shared.base + 0x31a60, f"{kind} are read with decipher_file")
 
+    print("--- keyboard")
+    input_source = constants(source("input.cpp"))
+    level = input_source["kKeyboardLevel"]
+    di8 = bins["di8.dll"]
+    push = di8.disasm(level, 2)[0]
+    report(push.mnemonic == "push" and push.op_str == "0x16", "di8 asks for the keyboard without exclusive access")
+    ask = di8.disasm(level, 12)
+    report(any(i.mnemonic == "call" and i.op_str.endswith("+ 0x34]") for i in ask), "that goes to SetCooperativeLevel")
+    key_at = input_source["kDefaultScreenshotKey"]
+    default_line = bytes(bins["game.dll"].image[key_at - 4:key_at + 28])
+    report(default_line.startswith(b'def f10 { command:"screenshot"'), "the default bindings have the shot on F10")
+    keys = bytes(bins["prism3d.exe"].image)
+    report(b"\0f12\0" in keys, "the engine knows F12")
+    # Bindings in the player's folder are read through the import the file hook replaces.
+    report(
+        any(i.mnemonic == "call" and f"0x{open_slot:x}" in i.op_str for i in shared.disasm(0x2be20, 32)),
+        "read_from_file opens files through that import too",
+    )
+    addresses = {e.name: e.address for e in shared.pe.DIRECTORY_ENTRY_EXPORT.symbols}
+    report(
+        addresses[b"?read_from_file@def_pool_t@prism@@QAE_NABVstring@2@@Z"] == 0x2be20,
+        "and that is read_from_file",
+    )
+    paths = bytes(bins["game.dll"].image)
+    report(b"/home/controls.def\0" in paths, "the player's bindings are in controls.def")
+
     print("--- exports called directly")
     timing = re.search(r'kTmrRead\[\] = "([^"]+)"', source("timing.cpp")).group(1)
     report(timing in bins["p3core.dll"].exports, "p3core exports tmr_read")

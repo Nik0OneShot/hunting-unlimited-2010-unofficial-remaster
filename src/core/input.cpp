@@ -18,6 +18,10 @@ namespace {
 constexpr uint32_t kSlotImpulseValue = 0x2d08e8;  // bound pointer to inp_impulse_value
 constexpr uint32_t kSlotLastDelta = 0x2d05f4;     // bound pointer to sys_get_lastdelta
 constexpr uint32_t kGameState = 0x1e9d68;  // pointer to pointer to the game state
+constexpr uint32_t kDefaultScreenshotKey = 0x1add48;  // in the default bindings text
+
+// Offsets in di8.dll, valid only for the verified build.
+constexpr uint32_t kKeyboardLevel = 0x30e7;  // push of the keyboard's cooperative level
 constexpr size_t kAimScale = 0x70;         // float: 1.0, or lower while looking down a sight
 
 struct CodeRange {
@@ -572,7 +576,22 @@ int input_test_wheel() {
 
 void input_set_fov(float game_fov_degrees) { g_fov = game_fov_degrees; }
 
-void input_attach_di8(HMODULE di8) {
+// DISCL_NOWINKEY doesn't only stop the Windows key: while the game has focus, it stops every
+// global hotkey reaching any other program, like the Print Screen key of a screenshot tool.
+void allow_global_hotkeys(HMODULE di8) {
+    constexpr uint8_t kPush = 0x6A;
+    constexpr uint8_t kForegroundNoWinKey = DISCL_NONEXCLUSIVE | DISCL_FOREGROUND | DISCL_NOWINKEY;
+    constexpr uint8_t kForeground = DISCL_NONEXCLUSIVE | DISCL_FOREGROUND;
+    const uint8_t expected[] = {kPush, kForegroundNoWinKey};
+    const uint8_t replacement[] = {kPush, kForeground};
+    const bool ok = patch_bytes(reinterpret_cast<char*>(di8) + kKeyboardLevel, expected, replacement,
+                                sizeof(expected));
+    logf("input: global hotkeys %s", ok ? "allowed" : "NOT allowed, unexpected code");
+}
+
+void input_attach_di8(HMODULE di8, bool verified) {
+    if (verified) allow_global_hotkeys(di8);
+
     HMODULE exe = GetModuleHandleW(nullptr);
     g_inp_event = reinterpret_cast<InpEventFn>(GetProcAddress(exe, "inp_event"));
     g_mouse_sensitivity =
@@ -591,6 +610,11 @@ void input_attach_di8(HMODULE di8) {
 void input_attach_game(HMODULE game, bool verified) {
     g_game = reinterpret_cast<char*>(game);
     g_verified = verified;
+    if (!verified) return;
+
+    // This is the default a new profile gets. layout_rewrite moves the key in an existing one.
+    const bool ok = patch_bytes(g_game + kDefaultScreenshotKey, "f10", "f12", 3);
+    logf("input: default screenshot key %s", ok ? "is F12" : "unchanged, unexpected data");
 }
 
 // game.dll binds its engine API by name into pointer slots, so swapping the slot catches

@@ -25,6 +25,8 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | Losing focus destroys and rebuilds the window and renderer | The game stays up, and alt-tab is instant. The hunt and its sound keep running, or the hunt can pause while you're away |
 | The mouse is held exclusively, and fast mice lose movement | Raw Input with no lost movement |
 | Only three mouse buttons work | Side buttons can be bound in the game's controls menu |
+| Global hotkeys, like a screenshot tool's Print Screen, don't work in game | They do now, and the Windows key works too |
+| The game's screenshot key is F10 | It's on F12, the same as Steam's |
 | Fixed scoped sensitivity | Zoom-scaled sensitivity, which can be turned off |
 | Scope zoom jumps between levels and loses fast wheel notches | Smooth zoom, and every notch counts |
 | The first intro screen can't be skipped, and only Esc skips the rest | Any key or click skips the whole intro |
@@ -42,6 +44,9 @@ there.
 
 Longshot starts the game directly, so Steam won't show the game as running. To launch it from
 Steam, add `longshot.exe` as a non-Steam game.
+
+F12 saves the game's own screenshot to `Documents\Hunting Unlimited 2010\screenshots`. You can
+pick a different key in the game's controls menu, and Longshot will leave it alone.
 
 Your security software may warn about `longshot.exe`, because it loads code into another
 process, and that is also what some malware does. The full source is in this repository.

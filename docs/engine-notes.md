@@ -102,6 +102,21 @@ Cameras are the `visor` classes, and four of them read the mouse:
 The first three share the same formula and are all fed `sys_get_lastdelta`, so the same scaling fixes them, and
 one sensitivity applies to all of them. `dead_visor` is left alone.
 
+## Keyboard
+
+`di8.dll` asks for the keyboard with `DISCL_NONEXCLUSIVE | DISCL_FOREGROUND | DISCL_NOWINKEY`, at `+0x30e7`. That
+last flag does more than stop the Windows key. While the game has focus, no `RegisterHotKey` hotkey fires in any
+program, so screenshot tools never see Print Screen. Tested with a stand-in: with the flag, none of a set of test
+hotkeys arrived, and without it, all of them did. Longshot removes the flag, so the Windows key works in game.
+
+The game's own screenshot is the console command `screenshot`, bound to F10, and it saves numbered PNGs to
+`/home/screenshots`. Print Screen isn't bound to anything. Bindings come from two places: default text in
+`game.dll` at `+0x1adc98`, read with `read_from`, then `/home/controls.def` if it exists, read with
+`read_from_file`. The game writes that file back, with any changes, when it exits.
+
+Longshot moves the shot to F12, Steam's screenshot key, by changing the default text and rewriting `controls.def`
+through the file hook. It only moves it from F10, and only if nothing else is on F12, so a key the player chose stays.
+
 ## Field of view
 
 `frustum_t` layout: `+0` fov, `+4` aspect, `+8` near, `+0xc` far, `+0xe8` dirty flag.

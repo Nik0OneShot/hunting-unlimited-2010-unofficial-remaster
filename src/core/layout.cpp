@@ -31,6 +31,9 @@ constexpr char kMenuBackground[] = "ui_static_back.mat";
 constexpr int kMenuBackLayer = -13;
 constexpr int kMenuTintLayer = -12;
 
+// The player's own key bindings.
+constexpr char kControls[] = "home/controls.def";
+
 // Group ids in ghud.esc.
 constexpr int kHudGame = 5;
 constexpr int kHudPhoto = 6;
@@ -448,7 +451,29 @@ bool is_menu(const std::string& path) {
 
 bool rewrites(const std::string& path) {
     return is_scope(path) || is_menu(path) || path == "ui/gbinoc.esc" || path == "ui/geyes.esc" ||
-           path == "ui/gflash.esc" || path == "ui/ghud.esc" || path == "def/ui/txt.def";
+           path == "ui/gflash.esc" || path == "ui/ghud.esc" || path == "def/ui/txt.def" ||
+           path == kControls;
+}
+
+// F12 is where Steam takes screenshots, so the game's own shot belongs there too, rather than on
+// its original F10. A key the player picked for themselves is left alone, as is anything already
+// on F12.
+std::string move_screenshot_key(const std::string& text) {
+    const size_t command = text.find("command:\"screenshot\"");
+    if (command == std::string::npos || text.find("def f12 {") != std::string::npos) {
+        return std::string();
+    }
+    const size_t key = text.rfind("def ", command);
+    if (key == std::string::npos || text.compare(key, 8, "def f10 ") != 0) return std::string();
+
+    std::string changed = text;
+    changed.replace(key, 7, "def f12");
+    return changed;
+}
+
+// With the stretched UI, layouts stay as they are, the same as on a 4:3 screen.
+float layout_aspect() {
+    return g_cfg.ui_layout == UiLayout::Center43 ? g_mode.aspect : kBaseAspect;
 }
 
 std::string normalised(const char* path) {
@@ -478,7 +503,7 @@ void** __cdecl hook_fs_open(void** out, const char* const* path, int realm) {
             logf("layout: could not read %s", name.c_str());
             return out;
         }
-        std::string changed = layout_rewrite(name.c_str(), original, g_mode.aspect, g_cfg.hud_layout);
+        std::string changed = layout_rewrite(name.c_str(), original, layout_aspect(), g_cfg.hud_layout);
         logf("layout: %s %s", name.c_str(), changed.empty() ? "left as it is" : "rewritten");
         cached = g_cache.emplace(name, changed.empty() ? original : changed).first;
     }
@@ -495,6 +520,7 @@ void** __cdecl hook_fs_open(void** out, const char* const* path, int realm) {
 std::string layout_rewrite(const char* path, const std::string& original, float aspect,
                            HudLayout hud) {
     const std::string name = normalised(path);
+    if (name == kControls) return move_screenshot_key(original);
     if (aspect <= kBaseAspect + 0.01f) return std::string();
     const Area area = area_for(aspect, hud);
 
@@ -519,8 +545,6 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
 }
 
 void layout_install(HMODULE p3core, HMODULE p3shared) {
-    if (g_cfg.ui_layout != UiLayout::Center43 || g_mode.aspect <= kBaseAspect + 0.01f) return;
-
     g_mem_file_bind = reinterpret_cast<MemFileBindFn>(GetProcAddress(p3core, kMemFileBind));
     g_file_size = reinterpret_cast<FileSizeFn>(GetProcAddress(p3core, kFileSize));
     g_file_read = reinterpret_cast<FileReadFn>(GetProcAddress(p3core, kFileRead));

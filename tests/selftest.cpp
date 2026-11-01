@@ -188,6 +188,23 @@ void layout_checks(LayoutFn rewrite) {
     check("menu: the original background stays", has_coords(out, "0 0 1024 768"));
     check("menu: the window stops fitting itself", strstr(out, "\"fitting\" : \"false\"") != nullptr);
     check("menu: nothing to tint here", strstr(out, "top.mat") == nullptr);
+
+    const char bindings[] =
+        "def commands {\n\tdef f10 {\n\t\tcommand:\"screenshot\"\n\t}\n\tdef f11 {\n\t\tcommand:\"bugreport\"\n\t}\n}\n";
+    check("screenshot key moves on any screen",
+          rewrite("/home/controls.def", bindings, 4.0f / 3.0f, kEdges, out, sizeof(out)) > 0);
+    check("screenshot key is now F12",
+          strstr(out, "def f12 {\n\t\tcommand:\"screenshot\"") != nullptr);
+    check("F10 is free", strstr(out, "def f10") == nullptr);
+    check("other commands stay", strstr(out, "def f11 {\n\t\tcommand:\"bugreport\"") != nullptr);
+    check("a key the player picked stays",
+          rewrite("/home/controls.def", "def commands {\n\tdef k {\n\t\tcommand:\"screenshot\"\n\t}\n}\n",
+                  kUltrawide, kEdges, out, sizeof(out)) == 0);
+    check("something already on F12 stays",
+          rewrite("/home/controls.def",
+                  "def commands {\n\tdef f10 {\n\t\tcommand:\"screenshot\"\n\t}\n}\n"
+                  "def impulses {\n\tdef f12 {\n\t\timpulse:\"run\"\n\t}\n}\n",
+                  kUltrawide, kEdges, out, sizeof(out)) == 0);
 }
 
 // tools/check_layouts.py extracts the real files and reads the results back. Each line of

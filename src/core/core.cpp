@@ -52,8 +52,7 @@ void on_module_loaded(HMODULE mod, const char* path) {
         display_attach_gl(mod);
     } else if (!_stricmp(name, "di8.dll") && !g_di8_done) {
         g_di8_done = true;
-        check_build(mod, kDi8);
-        input_attach_di8(mod);
+        input_attach_di8(mod, check_build(mod, kDi8));
     } else if (!_stricmp(name, "ds8.dll") && !g_ds8_done) {
         g_ds8_done = true;
         sound_attach_ds8(mod, check_build(mod, kDs8));
