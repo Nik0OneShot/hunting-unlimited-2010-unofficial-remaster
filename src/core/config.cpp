@@ -98,6 +98,10 @@ void config_load() {
 
     g_cfg.high_res_timer = read_bool(L"timing", L"high_res_timer", g_cfg.high_res_timer);
     g_cfg.skip_intro = read_bool(L"game", L"skip_intro", g_cfg.skip_intro);
+    g_cfg.straight_walking = read_bool(L"game", L"straight_walking", g_cfg.straight_walking);
+    g_cfg.weapon_queue = read_bool(L"game", L"weapon_queue", g_cfg.weapon_queue);
+    g_cfg.action_speed = read_float(L"game", L"action_speed", g_cfg.action_speed);
+    g_cfg.strong_atv = read_bool(L"game", L"strong_atv", g_cfg.strong_atv);
     g_cfg.pause_in_background =
         read_bool(L"game", L"pause_in_background", g_cfg.pause_in_background);
 

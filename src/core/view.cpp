@@ -303,6 +303,7 @@ void compute_ui_rect() {
 void __cdecl hook_ui_init() {
     g_real_ui_init();
     logf("view: ui_init finished");
+    logf("view: Steam overlay %s", GetModuleHandleW(L"GameOverlayRenderer.dll") ? "loaded" : "not loaded");
     g_ui_ready = true;
 
     if (g_verified && g_cvar_set) {
@@ -310,6 +311,7 @@ void __cdecl hook_ui_init() {
         apply_video_mode();
         input_game_ready();
         menu_game_ready();
+        weapons_game_ready();
         profile_game_ready();
     }
     compute_ui_rect();
@@ -319,6 +321,7 @@ void __cdecl hook_ui_init() {
 // The game draws the whole UI here, once a frame, after the world.
 void __cdecl hook_ui_process(void* context) {
     profile_ui_begin();
+    weapons_end_frame();
     const bool world_shown = g_in_hunt && g_world_finished;
     g_world_finished = false;
     display_before_ui();

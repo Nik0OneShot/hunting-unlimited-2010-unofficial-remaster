@@ -17,6 +17,9 @@ constexpr uintptr_t kTileRadiusBase = 0x1a873c;
 constexpr uintptr_t kGrassFadeX = 0x1e6338;
 constexpr uintptr_t kGrassFadeZ = 0x1e6350;
 constexpr size_t kCameraFrustum = 0x48;
+// The address inside the call that gets the field of view for the sun's glare, and what it holds.
+constexpr uintptr_t kGlareFovCall = 0xec734;
+constexpr uintptr_t kGetFovSlot = 0x19a4c4;
 
 constexpr unsigned char kDetailScaleStart[] = {0xD9, 0x44, 0x24, 0x04, 0x83, 0xC1, 0x48};
 constexpr unsigned char kGameGrassFade[] = {0x89, 0x88, 0x08, 0x3D};
@@ -25,6 +28,11 @@ constexpr unsigned char kGameGrassFade[] = {0x89, 0x88, 0x08, 0x3D};
 // radius, which is where attn.png drops below the alpha test's 0.3.
 constexpr float kGrassVisibleShare = 0.805f;
 constexpr float kGameGrassRadius = 30.0f;
+// The eyelids close when the sun is near the middle of the view, by the sun's angle as a share of
+// half the field of view. On a wide screen that takes in most of the sky, so this field of view
+// stays narrow. At this width they start closing with the sun 25 degrees off centre.
+constexpr float kWidestGlareFov = 50.0f;
+
 // Blocks of grass are 20 m wide, and stop being drawn at 62 m to their centres. The fade has to end
 // before their square edges would show.
 constexpr float kWidestWithGameReach = 47.0f;
@@ -85,6 +93,20 @@ void fix_tile_radius() {
     logf("detail: tree tile radius %s", ok ? "extended" : "FAILED");
 }
 
+float __fastcall hook_glare_fov(const void* frustum, void*) {
+    const float game_fov = view_game_fov(frustum);
+    return detail_glare_fov(game_fov > 0.0f ? game_fov : g_get_fov(frustum, nullptr));
+}
+
+void* g_glare_call = reinterpret_cast<void*>(&hook_glare_fov);
+
+void fix_glare() {
+    const void* game = g_game + kGetFovSlot;
+    void* const ours = &g_glare_call;
+    const bool ok = g_get_fov && patch_bytes(g_game + kGlareFovCall, &game, &ours, sizeof(ours));
+    logf("detail: sun glare %s", ok ? "narrowed" : "FAILED");
+}
+
 void hook_scale() {
     HMODULE core = GetModuleHandleW(L"p3core.dll");
     g_get_fov = core ? reinterpret_cast<GetFovFn>(GetProcAddress(core, kGetFov)) : nullptr;
@@ -110,6 +132,8 @@ float detail_scale(float reference_fov, float fov, float multiplier) {
     return reference / current * (multiplier > 0.25f ? multiplier : 0.25f);
 }
 
+float detail_glare_fov(float fov) { return fov < kWidestGlareFov ? fov : kWidestGlareFov; }
+
 float detail_grass_radius(float visible) {
     const float clamped = visible < kWidestGrass ? visible : kWidestGrass;
     const float radius = clamped / kGrassVisibleShare;
@@ -132,6 +156,7 @@ void detail_attach_game(HMODULE game, bool verified) {
     if (!verified) return;
     g_game = reinterpret_cast<char*>(game);
     hook_scale();
+    fix_glare();
     fix_tile_radius();
     check_grass();
     detail_settings_changed();

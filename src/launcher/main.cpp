@@ -299,6 +299,19 @@ std::wstring configured_game_dir(const std::wstring& ini) {
     return value;
 }
 
+// With "%command%" in its launch options, Steam adds the command it would have run. That's some
+// file in the game's folder, so wherever it points is the copy Steam wants started.
+std::wstring game_dir_in_command(int argc, wchar_t** argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::wstring path = argv[i];
+        const size_t slash = path.find_last_of(L"\\/");
+        if (slash == std::wstring::npos) continue;
+        path.resize(slash);
+        if (is_game_dir(path)) return path;
+    }
+    return {};
+}
+
 std::wstring find_game(const std::wstring& root, const std::wstring& ini,
                        const std::wstring& from_args) {
     if (!from_args.empty()) return from_args;
@@ -398,6 +411,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     if (!file_exists(dll)) return fail(L"longshot_core.dll is missing from the Longshot folder.");
+
+    wchar_t steam_app[32] = {};
+    if (GetEnvironmentVariableW(L"SteamAppId", steam_app, 32)) {
+        launcher_log(std::wstring(L"started by Steam, app ") + steam_app);
+    }
+    if (game_dir_arg.empty() && argv) game_dir_arg = game_dir_in_command(argc, argv);
 
     const std::wstring game_dir = find_game(root, ini, game_dir_arg);
     if (game_dir.empty() || !is_game_dir(game_dir)) {

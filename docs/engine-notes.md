@@ -412,6 +412,122 @@ standard OpenGL one with a horizontal field of view: `away = m[11] / (ndc + m[10
   Each cvar has a validator at `cvar+0x64`, which `cvar_t::set` calls, and that stores a float in a global of its own
   at `+0x1e4004`, `+0x1e4008` and `+0x1e400c`. See Distances.
 
+## Weapons
+
+A weapon is in one of three states at `+0x58`: 0 busy, 1 ready, 2 down. While busy, `+0x340` says what it's doing, and
+nearly every action ends when its animation does, through the listener at `+0x60`, and not on a timer. Presses come from
+`inp_impulse_is_activated`, which reads a byte and clears it, and the byte only lasts one input frame. Nothing reads
+reload or sights while a weapon is busy, and raising or lowering reaches a toggle that does nothing, so those presses just
+vanish. The one thing that remembers is `+0x1fc`, a lower request.
+
+Firing a scoped rifle goes: shot, a short kick, a wait to watch the bullet land, cock, then ready. Firing never clears the
+aim, and cocking ends by restoring the scope, which is why a holster seemed to scope back in first.
+
+So Longshot reads the presses itself at the start of the player's input, at the call at `+0xddaf`, and holds one for
+later if the weapon is busy. The latest press replaces it. Once the weapon is free the press goes through the game's own
+readers, so nothing is called out of turn. Raising, lowering and the sights wait as long as it takes, because they say how
+the weapon should end up, but a shot only keeps for 0.35 s, as a late shot is worse than none. With a lower waiting, or
+the sights while aimed, the wait to watch the bullet is skipped, and the end of cocking doesn't put the scope back. A press during a reload sets the game's own stop flag at
+`+0x34c`, which takes effect after the round it's on. Cocking can't be cut short, and neither can anything else without
+leaving the weapon's state to be repaired by hand, because a forced stop raises no end event.
+
+Animation time only moves when `+0x15a8c0` is called with some seconds, and sounds and events sit on that same clock, so
+scaling those seconds speeds up an action cleanly. It's applied to raising, lowering and aiming, at the three calls that
+step a held weapon or item. Items that hold for their own length, like calls, are left alone.
+
+## Walking
+
+Forward is built from the view with no bias, the head bob stays in the camera, and physics runs at a fixed 40 Hz. But
+`avatar::update` at `+0x126dd0` never corrects sideways velocity, and the player's contacts with the ground use ODE's box
+friction, with a limit of 500 per axis, on axes close to the world's own. Walking across that box at an angle, the
+axes don't resist equally, so the player gets pulled toward the nearest world axis. This is a model, worked out from the
+code, and the drift it predicts changes with heading.
+
+Longshot hooks the one `dJointCreateContact` call at `+0x12765d`, and for the player's contacts it sets `dContactFDir1`
+to the direction of the walk, which lines the box up with it. In the game that left a typical drift of 1 degree over 3 m,
+across 57 straight stretches. It logs that drift, with the heading, and whether the correction is on.
+
+## Vehicles
+
+The ATV and the horse are the only vehicles. The horse moves by animation, so its speed is in its `.bhv` data.
+
+The ATV isn't driven through its wheels, whose friction is zero. The tick at `+0x98510` pushes on the rear hubs with a
+fixed force, 600 N each on 340 kg, which stalls at 21 degrees. It stops pushing altogether once the speed reaches 25 km/h.
+That counts falling too, which is why it took a cliff to go fast. With no throttle, on the ground, it loses a fifth of its
+speed every tick, at 40 ticks a second, which would stop it dead at any real speed. None of this depends on frame rate:
+physics runs at a fixed 40 Hz. Throttle is on or off. Reverse shares the cut-out, but with only 400 N.
+
+The tyres do hold it sideways, by cancelling sideways speed at each wheel, up to 0.8 m/s a tick. That's about 3 g, and
+the ATV rolls at around 1 g, so with any real speed a hard turn flips it, and the rider dies when it lands upside down.
+At 25 km/h it never mattered. The limit comes down to 0.22 m/s, about 0.8 g, so it slides first. The limit and the test
+for reaching it are separate: changing only the limit leaves full grip for any slide under 0.8 m/s, so it would still
+flip, and the test's values are shared with other code, so its operands get pointed at Longshot's own.
+
+It bounces for three reasons, which are worse the faster it goes. The suspension, set when the ATV is made at `+0x9b21c`,
+is ERP 0.7 and CFM 0.0007, which comes to a 40000 N/m spring with 429 N·s/m of damping. On 85 kg a corner that shakes about
+3.5 times a second with 12% of the damping it takes to settle, so it's still going when the next bump arrives. The wheels
+are hard balls on hard ground: the game never touches the world's contact settings, which stay at ODE's defaults, ERP 0.2,
+no limit on the correcting speed and no surface layer. At 55 km/h they cover 38 cm a tick over ground made of flat facets,
+so any ridge throws one off the ground. And nothing is left to soak it up, since the tyres are the same material as a rock
+to the solver.
+
+Strong ATV gives the suspension 15000 N/m and 1500 N·s/m, about 2 shakes a second at 66%, which settles within one swing.
+It also makes each tyre contact give, at 20000 N/m and 1200 N·s/m, with the bounce flag cleared. Tyres are told apart by
+material 5 and group 6: a shape's material is at `+0x68` and its group at `+0x6c`, and the map's own shapes can have
+material 5, but in group 0. The contact hook in `walking.cpp` passes them to `vehicle.cpp`.
+
+Softer springs sit lower, and that has its own cost. The chassis collision is one capsule, from `vehicle.pmc`, whose
+underside is level with the hubs, 28.5 cm above the ground with 0.28 m tyres. The game's spring used 2 cm of that at rest,
+but the soft spring and tyres use 10 cm, and a hard hit took the rest. Only the chassis is wired to the handler at
+`+0x99370`, which plays `coll.ogg`, `coll0.ogg` or `coll1.ogg` and raises dust on any contact above 1 m/s, so it came out as
+a smack and a puff of smoke.
+
+So the wheels start 10 cm below where they belong, which preloads the springs: the ride doesn't change, and the ATV rests
+3 cm above the game's height, with the worst dips in the model no lower than the game's own suspension reached. A wheel's
+height is `y0 + travel * 0.5` at `+0x9b11f`, from a `.pma` with two frames, but all four animations have identical frames,
+so the travel is zero and changing the 0.5 would do nothing. The load and the multiply get replaced with a load of the drop.
+The arms read `y0` and the travel on their own, so they don't care. A bump stop in the tyres also kept the chassis up, but
+gave back most of the jolts.
+
+That cut the touches but couldn't end them, and firmer springs don't either. A side-on model of the whole ATV puts nearly
+all of them at the nose, where the capsule reaches 40 cm past the front axle. The chassis has the inertia of a box 4 m by
+3 m, 231 kg·m² in pitch, so it's slow to follow the ground. Doubling the spring rate barely changed how often it touched,
+and the game's own suspension touched about as often at the same speed. What gives them away is the handler: it goes by
+the ATV's speed, so at 55 km/h a graze counts as a crash, and the model's typical touch closes on the ground at under 1 m/s.
+So the check at `+0x993d1` reads a value that Longshot sets for each contact. It stays at 1 unless the contact faces at
+least halfway up and the chassis is closing on it at under 5 m/s, measured at the contact from the body's velocity and
+spin, in which case nothing plays. Trees and walls crash as they always did. The log has a line for each touch. A minute
+of driving at speed gave 43 touches, 38 of them ahead of the centre, closing at 0.9 m/s in the middle case, and only one
+over the limit.
+
+The capsule is off-centre, so the game makes it a geom inside a transform geom, and contacts name the inner one, which has
+no body. Only the outer one has it, so the speed comes through the shape's own pointer at `+0x88`. If it can't be read,
+the way the contact faces still decides, so a bad read can't turn a graze back into a crash.
+
+Lifting it doesn't bring the rolling back, because the tyres have no friction and the side grip is a force on the wheel
+bodies, so it acts at hub height, not at the ground. Its lever is the hub's depth below the centre of mass, about 10 cm.
+That's about 280 N·m at the grip limit, against the 384 N·m or so that used to roll it, and 1180 N·m to tip it on flat
+ground. Sideways on a slope it tips at the game's 46 degrees.
+
+Whether the game's tyres ever bounced can't be read from the code. A contact bounces if the product of its materials'
+first fields is over 0.0001, and the setup at `+0x51c2` appears to fill in only the friction beside that field. The log
+says so the first time a tyre is asked to bounce, and every 10 seconds or so how far the tyres sank.
+
+A model of one corner over random facets at 55 km/h puts the typical jolt 30% lower and the worst 40% lower, with the wheel
+off the ground 9% of the time instead of 22%. At 25 km/h that's 0.9% instead of 12%. It compares settings. It isn't a
+measurement of the game.
+
+The changes are all in `vehicle.cpp`, and the suspension needs a new ATV to take effect.
+
+## Eyelids
+
+`ui/geyes.esc` is two strips of black, and `+0x7f3f0` moves them each frame by one number, called the glare here, which
+sets both how far they close and how opaque they are. It's worked out at `+0xec6b0`: the angle between the view and the
+sun, as a share of half the field of view, scaled by the weather, and zero if the sun is hidden. So the wider the field
+of view, the further from the sun you can look and still be squinting. At 3440x1440 that was over 60 degrees. Longshot
+gives that one reading a field of view of its own, of 50 degrees or the game's own if that's less, as it is through a
+scope. The sky has nothing to do with it: that's just where the sun usually is.
+
 ## Distances
 
 **View distance** is `g_zclip`, and the far plane is `(1 - z) * 300 + z * 1700`. The slider works, tops out at 1700 m,

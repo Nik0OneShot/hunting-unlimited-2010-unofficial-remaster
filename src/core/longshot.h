@@ -48,6 +48,10 @@ struct Config {
 
     bool skip_intro = false;
     bool pause_in_background = false;
+    bool straight_walking = true;
+    bool weapon_queue = true;
+    float action_speed = 1.0f;
+    bool strong_atv = true;
 };
 
 // The mode the game is asked to run in, resolved from the config and the desktop.
@@ -145,10 +149,46 @@ int graphics_test_multisample(HDC dc, int samples);
 // Runs `work` with a throwaway OpenGL context current, on a hidden window `size` pixels square.
 void graphics_in_context(int size, int samples, const std::function<void()>& work);
 
+// weapons.cpp
+void weapons_attach_game(HMODULE game, bool verified);
+// Needs the game's input functions to be bound, so it comes after ui_init.
+void weapons_game_ready();
+void weapons_end_frame();
+// 0 if the input queue behaves, or which check failed.
+int weapons_test();
+
+// ODE's dContact, as built into this game.
+struct Contact {
+    unsigned mode;
+    float surface[10];
+    float position[4];
+    float normal[4];
+    float depth;
+    char* first;
+    char* second;
+    int sides[2];
+    float friction_direction[4];
+};
+static_assert(sizeof(Contact) == 0x70, "the game's contacts are 0x70 bytes");
+
+// walking.cpp
+void walking_attach_game(HMODULE game, bool verified);
+// How far off course a walk went, in degrees, with left as negative.
+float walking_drift(float along, float across);
+
+// vehicle.cpp
+void vehicle_attach_game(HMODULE game, bool verified);
+void vehicle_settings_changed();
+// Called with every contact that isn't the player's.
+void vehicle_contact(Contact* contact);
+// 0 if tyres are told from everything else, or which check failed.
+int vehicle_test();
+
 // detail.cpp
 void detail_attach_game(HMODULE game, bool verified);
 void detail_settings_changed();
 float detail_scale(float reference_fov, float fov, float multiplier);
+float detail_glare_fov(float fov);
 float detail_grass_radius(float visible);
 
 // post.cpp

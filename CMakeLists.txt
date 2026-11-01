@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(longshot VERSION 0.1.1 LANGUAGES CXX)
+project(longshot VERSION 0.1.2 LANGUAGES CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "The game is 32-bit, so Longshot must be too. Configure with: cmake -A Win32")
@@ -38,7 +38,10 @@ add_library(longshot_core SHARED
     src/core/settings.cpp
     src/core/sound.cpp
     src/core/timing.cpp
+    src/core/vehicle.cpp
     src/core/view.cpp
+    src/core/walking.cpp
+    src/core/weapons.cpp
 )
 target_compile_definitions(longshot_core PRIVATE DIRECTINPUT_VERSION=0x0800)
 target_link_libraries(longshot_core PRIVATE user32 gdi32 winmm)

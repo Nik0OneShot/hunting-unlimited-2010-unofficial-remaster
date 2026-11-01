@@ -67,6 +67,8 @@ constexpr Choice kTextureFiltering[] = {
 constexpr Choice kGrassDistance[] = {{"Game", "0"}, {"Far", "47"}, {"Very far", "85"}};
 constexpr Choice kLodDistance[] = {
     {"Game", "1"}, {"Far", "1.5"}, {"Very far", "2"}, {"Extreme", "3"}};
+constexpr Choice kActionSpeed[] = {
+    {"Normal", "1"}, {"Quick", "1.25"}, {"Quicker", "1.5"}, {"Quickest", "2"}};
 constexpr Choice kSharpening[] = {
     {"Off", "0"}, {"Light", "0.3"}, {"Medium", "0.6"}, {"Strong", "1.0"}};
 constexpr Choice kVibrance[] = {{"Original", "0"}, {"Richer", "0.2"}, {"Vivid", "0.4"}};
@@ -115,6 +117,10 @@ const Row kRows[] = {
     {"Mouse DPI", L"mouse", L"mouse_dpi", kMouseDpis, count_of(kMouseDpis), "800", false},
     {"Scoped sensitivity", L"mouse", L"zoom_mode", kZoomModes, count_of(kZoomModes), "proportional",
      false},
+    {"Straight walking", L"game", L"straight_walking", kOnOff, count_of(kOnOff), "1", false},
+    {"Weapon input queue", L"game", L"weapon_queue", kOnOff, count_of(kOnOff), "1", false},
+    {"Weapon action speed", L"game", L"action_speed", kActionSpeed, count_of(kActionSpeed), "1", false},
+    {"Strong ATV", L"game", L"strong_atv", kOnOff, count_of(kOnOff), "1", false},
     {"Pause in the background", L"game", L"pause_in_background", kOnOff, count_of(kOnOff), "0", true},
     {"Skip the intro", L"game", L"skip_intro", kOnOff, count_of(kOnOff), "0", true},
 };
@@ -226,6 +232,7 @@ void save_rows() {
     config_load();
     display_settings_changed();
     detail_settings_changed();
+    vehicle_settings_changed();
 }
 
 // Hides whichever of the game's own tabs is showing, the same way the game reaches it.
@@ -308,7 +315,7 @@ std::string settings_tab_entity() {
 
 std::string settings_page_entity() {
     constexpr int kFirstTop = 640;
-    constexpr int kRowStep = 30;
+    constexpr int kRowStep = 27;
 
     std::string rows;
     int top = kFirstTop;

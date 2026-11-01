@@ -8,6 +8,7 @@ repeating them, then confirms each against the real binaries. Needs: pip install
 import re
 import struct
 import sys
+import zipfile
 from pathlib import Path
 
 import capstone
@@ -186,10 +187,122 @@ def main():
         "the frame draws the world where expected",
     )
 
+    print("--- weapons")
+    weapon_values = constants(source("weapons.cpp"))
+    weapon_image = bytes(world_game.image)
+    def int_at(offset):
+        return struct.unpack_from("<I", weapon_image, offset)[0]
+    def call_at(offset):
+        return world_game.disasm(offset, 5)[0]
+    reads = world_game.disasm(0xda69, 16)
+    report(
+        any(i.op_str == f"dword ptr [{world_game.base + weapon_values['kSlotImpulseActivated']:#x}]" for i in reads),
+        "the player reads presses through the slot weapons.cpp replaces",
+    )
+    report(call_at(weapon_values["kPlayerInputCall"]).op_str == hex(world_game.base + weapon_values["kPlayerInput"]),
+           "and reads its input from the call it replaces")
+    for name in ("kRifleStepCall", "kBowStepCall", "kItemStepCall"):
+        report(call_at(weapon_values[name]).op_str == hex(world_game.base + weapon_values["kModelStep"]),
+               f"{name} steps a model's animation")
+    report(int_at(weapon_values["kRifleListenerVtable"]) - world_game.base == 0xaad30, "the rifle's event handler is in place")
+    event_code = world_game.disasm(0xaaf9a, 0x20)
+    report(
+        any(i.op_str == f"al, byte ptr [esi + {weapon_values['kRifleScopeFitted'] - weapon_values['kRifleListener']:#x}]" for i in event_code),
+        "it reads whether a scope is fitted where expected",
+    )
+    update_code = world_game.disasm(0xa66ea, 0x20)
+    report(any(i.op_str == f"al, byte ptr [esi + {weapon_values['kRifleLowerWanted']:#x}]" for i in update_code),
+           "a wanted lower is kept where expected")
+    report(any(i.op_str == "eax, dword ptr [ecx + 0x58]" for i in world_game.disasm(0xa24b0, 4)), "weapon state is where expected")
+    report(any(i.op_str == f"byte ptr [esi + {weapon_values['kRifleStopReload']:#x}], 1" for i in world_game.disasm(0xaaafa, 8)),
+           "stopping a reload is where expected")
+
+    print("--- walking")
+    walk_values = constants(source("walking.cpp"))
+    walk_call = call_at(walk_values["kCreateContactCall"])
+    report(walk_call.op_str == hex(world_game.base + walk_values["kCreateContact"]), "contacts become joints where expected")
+    report(
+        any(f"{world_game.base + walk_values['kAvatarListenerVtable']:#x}" in i.op_str for i in world_game.disasm(0x124000, 0x3000)),
+        "the avatar's listener is where expected",
+    )
+
+    print("--- vehicle")
+    vehicle_text = source("vehicle.cpp")
+    tuned = re.findall(r"\{(0x[0-9a-f]+), (0x[0-9A-F]+), (0x[0-9A-F]+)\}", vehicle_text)
+    report(len(tuned) == 8, "all eight ATV values were read from vehicle.cpp")
+    for at, stock, _strong in tuned:
+        report(int_at(int(at, 16)) == int(stock, 16), f"the ATV value at {at} is the game's")
+    for site in (0x9b21c, 0x9b229):
+        report(world_game.disasm(site, 5)[0].mnemonic == "push", f"the suspension is pushed at {site:#x}")
+    vehicle_values = constants(vehicle_text)
+    report(world_game.disasm(0x9b26f, 2)[0].op_str == str(vehicle_values["kVehicleGroup"]), "the wheels' group is the one expected")
+    report(world_game.disasm(0x9b293, 2)[0].op_str == str(vehicle_values["kTyreMaterial"]), "the wheels' material is the one expected")
+    report(
+        world_game.disasm(0x153bd0, 3)[0].op_str == f"eax, dword ptr [ecx + {vehicle_values['kShapeMaterial']:#x}]",
+        "a shape's material is where expected",
+    )
+    report(
+        world_game.disasm(0x153bf0, 3)[0].op_str == f"eax, dword ptr [ecx + {vehicle_values['kShapeGroup']:#x}]",
+        "a shape's group is where expected",
+    )
+    report(
+        world_game.disasm(0x106e72, 3)[0].op_str == f"eax, dword ptr [esi + {vehicle_values['kGeomShape']:#x}]",
+        "a geom's shape is where expected",
+    )
+    report(world_game.disasm(0x1290b6, 4)[0].op_str == "byte ptr [edi + 0x54], 0x10", "the physics reads soft CFM from the mode")
+    report(world_game.disasm(0x129067, 2)[0].op_str == "al, 8", "the physics reads soft ERP from the mode")
+    report(world_game.disasm(0x1290bf, 3)[0].op_str == "eax, dword ptr [edi + 0x6c]", "soft CFM is where expected")
+    report(world_game.disasm(0x12906d, 3)[0].op_str == "dword ptr [edi + 0x68]", "soft ERP is where expected")
+    wheel_height = world_game.disasm(vehicle_values["kWheelHeight"], 9)
+    report(
+        len(wheel_height) == 2 and wheel_height[0].mnemonic == "fld" and wheel_height[0].op_str == "dword ptr [esi + 0x54]",
+        "a wheel starts from its suspension travel",
+    )
+    report(
+        len(wheel_height) == 2 and wheel_height[1].op_str == f"dword ptr [{world_game.base + vehicle_values['kHalf']:#x}]",
+        "and halves it",
+    )
+    report(int_at(vehicle_values["kHalf"]) == 0x3F000000, "half is 0.5")
+    crash_check = world_game.disasm(0x993d1, 6)[0]
+    report(
+        crash_check.mnemonic == "fcomp" and crash_check.op_str == f"dword ptr [{world_game.base + 0x19aed4:#x}]",
+        "the crash handler checks its speed where expected",
+    )
+    report(int_at(0x19aed4) == 0x3F800000, "against 1")
+    report(world_game.disasm(0x106ea2, 3)[0].op_str == f"eax, dword ptr [esi + {vehicle_values['kGeomBody']:#x}]", "a geom's body is where expected")
+    for site, what in ((0x12567f, "a plain capsule"), (0x125699, "the geom around an off-centre capsule")):
+        report(
+            world_game.disasm(site, 6)[0].op_str == f"dword ptr [esi + {vehicle_values['kShapeGeom']:#x}], eax",
+            f"a shape holds {what} where expected",
+        )
+    report(world_game.disasm(0x10b0a2, 6)[0].op_str == f"eax, [esi + {vehicle_values['kBodyPosition']:#x}]", "a body's position is where expected")
+    report(world_game.disasm(0x10b102, 6)[0].op_str == f"eax, [esi + {vehicle_values['kBodyVelocity']:#x}]", "a body's velocity is where expected")
+    report(world_game.disasm(0x10b132, 6)[0].op_str == f"eax, [esi + {vehicle_values['kBodySpin']:#x}]", "a body's spin is where expected")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        for corner in ("fl", "fr", "rl", "rr"):
+            pose = base.read(f"models/vehicles/atv/atv_{corner}.pma")
+            report(pose[0x37:0x37 + 168] == pose[0x37 + 168:0x37 + 336], f"the {corner} wheel's suspension animation has no travel")
+    for site, target, mnemonic in ((0x9888d, 0x1a277c, "fcomp"), (0x988a0, 0x19bfe0, "fld")):
+        grip_check = world_game.disasm(site, 6)[0]
+        report(
+            grip_check.mnemonic == mnemonic and grip_check.op_str == f"dword ptr [{world_game.base + target:#x}]",
+            f"the tyres' grip is checked at {site:#x}",
+        )
+
     print("--- distances")
     detail_text = source("detail.cpp")
     detail = constants(detail_text)
     distance_image = bytes(bins["game.dll"].image)
+    glare_call = world_game.disasm(detail["kGlareFovCall"] - 2, 6)[0]
+    report(
+        glare_call.mnemonic == "call" and glare_call.op_str == f"dword ptr [{world_game.base + detail['kGetFovSlot']:#x}]",
+        "the sun's glare reads the field of view where expected",
+    )
+    report(
+        ("p3core.dll", "?get_fov@frustum_t@prism@@QBEMXZ") in world_game.imports
+        and world_game.imports[("p3core.dll", "?get_fov@frustum_t@prism@@QBEMXZ")] == world_game.base + detail["kGetFovSlot"],
+        "through the game's import of get_fov",
+    )
     def float_at(offset):
         return struct.unpack_from("<f", distance_image, offset)[0]
     report(distance_image[detail["kDetailScale"]:].startswith(bytes.fromhex("d944240483c148")),

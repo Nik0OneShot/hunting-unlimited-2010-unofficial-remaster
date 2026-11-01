@@ -21,6 +21,11 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | No anti-aliasing, and jagged leaves and grass | Up to 8x anti-aliasing, including foliage edges, and 16x texture filtering |
 | Grass and trees pop in close to you | Grass out to 85 m, and trees that keep their detail up to 3x further |
 | A flat, soft image by modern standards | Optional sharpening, richer colour and bloom, which leave the HUD alone |
+| Holding forward walks you slightly off to the side | You walk where you're heading |
+| Weapons ignore or misplay presses made while they're busy | Presses wait their turn, the latest one decides, and reloads can be cut short |
+| Fire, holster, and the scope comes back up first | It goes straight to cocking and holstering |
+| The ATV cuts out at 25 km/h, stalls on hills, and bounces constantly | It pulls away properly, climbs without a run-up, reaches 55 km/h, and rides on its suspension |
+| Your eyelids close whenever the sun is anywhere in a wide view | Only when you're looking close to the sun |
 | Menus and HUD are stretched on wide screens | Correct proportions, with menus centred and their backgrounds filling the sides |
 | The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |
 | Scopes and fades only cover the middle of a wide screen | Scopes, binoculars, flashes and eyelids reach the screen edges |
@@ -49,8 +54,15 @@ It finds the Steam install by itself. If it can't, set `game_dir` under `[paths]
 `longshot.ini`. The main settings are in the game, under Options, then Longshot. All of them are
 in that file, created on first run, and each is explained there.
 
-Longshot starts the game directly, so Steam won't show the game as running. To launch it from
-Steam, add `longshot.exe` as a non-Steam game.
+To play through Steam, so it shows you as playing and counts your time, right-click the game in
+Steam, choose Properties, and set Launch Options to this, using your own path to Longshot:
+
+```text
+"C:\full\path\to\longshot.exe" %command%
+```
+
+Then press Play in Steam as usual. Running `longshot.exe` by itself still works, but Steam won't
+show the game as running.
 
 F12 saves the game's own screenshot to `Documents\Hunting Unlimited 2010\screenshots`. You can
 pick a different key in the game's controls menu, and Longshot will leave it alone.
@@ -86,7 +98,7 @@ reg add "HKCU\Software\Microsoft\GameBar" /v UseNexusForGameBarEnabled /t REG_DW
 ## Known gaps
 
 - Only tested on one PC so far, with the Steam build.
-- The Steam overlay hasn't been tested with Longshot, so Steam's own screenshots may not work.
+- Steam's overlay loads when the game starts through Steam, but it hasn't been fully tested with Longshot.
 - Distant trees and fine edges can still shimmer, even at 8x anti-aliasing.
 
 ## Reporting a problem

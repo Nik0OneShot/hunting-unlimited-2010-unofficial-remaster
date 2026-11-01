@@ -27,6 +27,11 @@ Done:
 - Menu backgrounds that fill the screen
 - An in-game settings tab, under Options
 - Turn speed as cm/360, from a mouse DPI setting
+- Launching through Steam
+- Eyelids that only close near the sun
+- Walking straight
+- Weapons and equipment that queue presses, with optional faster actions
+- A stronger ATV, on softer suspension
 
 ## 3. Performance and stability
 

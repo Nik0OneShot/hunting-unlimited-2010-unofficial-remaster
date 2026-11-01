@@ -316,13 +316,18 @@ int main() {
     auto test_multisample =
         reinterpret_cast<int(__cdecl*)(HDC, int)>(GetProcAddress(core, "longshot_test_multisample"));
     auto test_post = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_post"));
+    auto test_weapons = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_weapons"));
+    auto test_vehicle = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_vehicle"));
+    auto test_drift = reinterpret_cast<float(__cdecl*)(float, float)>(GetProcAddress(core, "longshot_test_drift"));
     auto test_detail =
         reinterpret_cast<float(__cdecl*)(float, float, float)>(GetProcAddress(core, "longshot_test_detail"));
     auto test_grass = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_grass"));
+    auto test_glare = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_glare"));
     const bool exports = test_iat && test_fov && test_raw && read_raw && count_raw && test_ui &&
                          test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
                          test_pause && test_turn && test_row_fits && test_slow &&
-                         test_multisample && test_post && test_detail && test_grass;
+                         test_multisample && test_post && test_detail && test_grass && test_glare && test_weapons && test_vehicle &&
+                         test_drift;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -392,9 +397,20 @@ int main() {
     check("zooming in extends them, as in the game", about(test_detail(80.0f, 40.0f, 1.0f), 2.31f));
     check("and LOD distance multiplies them", about(test_detail(80.0f, 80.0f, 2.0f), 2.0f));
     check("LOD distance can't reach zero", test_detail(80.0f, 80.0f, 0.0f) > 0.2f);
+    check("the sun's glare ignores a wide field of view", about(test_glare(125.0f), 50.0f));
+    check("and narrows further through a scope", about(test_glare(10.0f), 10.0f));
     check("grass keeps the game's fade by default", about(test_grass(0.0f), 30.0f));
     check("grass at Far stays inside the game's reach", test_grass(47.0f) * 0.805f < 47.9f);
     check("grass stops at the widened reach", test_grass(1000.0f) * 0.805f < 85.1f);
+
+    const int weapons = test_weapons();
+    fprintf(g_out, "INFO  weapon queue check result: %d\n", weapons);
+    check("the weapon input queue behaves", weapons == 0);
+    const int vehicle = test_vehicle();
+    fprintf(g_out, "INFO  vehicle check result: %d\n", vehicle);
+    check("only the ATV's tyres get softened", vehicle == 0);
+    check("walking straight reads as no drift", about(test_drift(3.0f, 0.0f), 0.0f));
+    check("drifting to one side reads as left", test_drift(3.0f, -0.3f) < -5.0f);
 
     const int post = test_post();
     fprintf(g_out, "INFO  post-processing check result: %d\n", post);

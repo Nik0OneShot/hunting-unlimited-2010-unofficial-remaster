@@ -64,6 +64,9 @@ void on_module_loaded(HMODULE mod, const char* path) {
         menu_attach_game(mod, verified);
         view_attach_game(mod, verified);
         detail_attach_game(mod, verified);
+        weapons_attach_game(mod, verified);
+        vehicle_attach_game(mod, verified);
+        walking_attach_game(mod, verified);
         settings_attach_game(mod, verified);
         profile_attach_game(mod, verified);
     }
@@ -218,10 +221,20 @@ extern "C" __declspec(dllexport) int __cdecl longshot_test_multisample(HDC dc, i
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_post() { return post_test(); }
 
+extern "C" __declspec(dllexport) int __cdecl longshot_test_weapons() { return weapons_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_vehicle() { return vehicle_test(); }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_drift(float along, float across) {
+    return walking_drift(along, across);
+}
+
 extern "C" __declspec(dllexport) float __cdecl longshot_test_detail(float reference, float fov,
                                                                     float multiplier) {
     return detail_scale(reference, fov, multiplier);
 }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_glare(float fov) { return detail_glare_fov(fov); }
 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_grass(float visible) {
     return detail_grass_radius(visible);
