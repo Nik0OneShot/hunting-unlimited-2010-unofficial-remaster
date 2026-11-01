@@ -1,0 +1,11 @@
+# Never commit game files. Players supply their own copy of the game.
+/game/
+
+# Build output and runtime data
+/build/
+/dist/
+/logs/
+*.log
+*.dmp
+*.pdb
+*.ilk
