@@ -32,6 +32,7 @@ constexpr float kGameGrassRadius = 30.0f;
 // half the field of view. On a wide screen that takes in most of the sky, so this field of view
 // stays narrow. At this width they start closing with the sun 25 degrees off centre.
 constexpr float kWidestGlareFov = 50.0f;
+constexpr float kMostZoomedDetail = 8.0f;  // what zoom and LOD distance come to together, at most
 
 // Blocks of grass are 20 m wide, and stop being drawn at 62 m to their centres. The fade has to end
 // before their square edges would show.
@@ -180,10 +181,15 @@ void check_grass() {
 
 }  // namespace
 
+// Zooming in extends the ranges by as much as it magnifies, so LOD distance on top of that only adds
+// so much. Otherwise a 3 at eight times put full trees a kilometre out, through binoculars. It's
+// never less than the zoom alone, or than LOD distance alone.
 float detail_scale(float reference_fov, float fov, float multiplier) {
     const float reference = tanf(reference_fov * 0.5f * kDegToRad);
     const float current = tanf(fov * 0.5f * kDegToRad);
-    return reference / current * (multiplier > 0.25f ? multiplier : 0.25f);
+    const float zoom = reference / current;
+    const float more = multiplier > 0.25f ? multiplier : 0.25f;
+    return fminf(zoom * more, fmaxf(kMostZoomedDetail, fmaxf(more, zoom)));
 }
 
 float detail_glare_fov(float fov) { return fov < kWidestGlareFov ? fov : kWidestGlareFov; }

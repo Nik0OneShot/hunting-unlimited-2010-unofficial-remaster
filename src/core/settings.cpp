@@ -72,6 +72,8 @@ constexpr Choice kActionSpeed[] = {
 constexpr Choice kSharpening[] = {
     {"Off", "0"}, {"Light", "0.3"}, {"Medium", "0.6"}, {"Strong", "1.0"}};
 constexpr Choice kVibrance[] = {{"Original", "0"}, {"Richer", "0.2"}, {"Vivid", "0.4"}};
+constexpr Choice kFreelookKeys[] = {{"Off", "0"},     {"Left Alt", "164"}, {"Right Alt", "165"},
+                                    {"Mouse 4", "5"}, {"Mouse 5", "6"}};
 constexpr Choice kBloom[] = {{"Off", "0"}, {"Soft", "0.15"}, {"Strong", "0.35"}};
 constexpr Choice kZoomModes[] = {{"Scales with zoom", "proportional"},
                                  {"Same as unscoped", "off"},
@@ -121,6 +123,7 @@ const Row kRows[] = {
     {"Weapon input queue", L"game", L"weapon_queue", kOnOff, count_of(kOnOff), "1", false},
     {"Weapon action speed", L"game", L"action_speed", kActionSpeed, count_of(kActionSpeed), "1", false},
     {"Strong ATV", L"game", L"strong_atv", kOnOff, count_of(kOnOff), "1", false},
+    {"Freelook key", L"game", L"freelook_key", kFreelookKeys, count_of(kFreelookKeys), "164", false},
     {"Faster walking", L"game", L"faster_walking", kOnOff, count_of(kOnOff), "1", false},
     {"Noise follows your speed", L"game", L"speed_noise", kOnOff, count_of(kOnOff), "1", false},
     {"Ironsight sway moves the view", L"game", L"irons_view_sway", kOnOff, count_of(kOnOff), "1", false},
@@ -323,7 +326,7 @@ std::string settings_tab_entity() {
 
 std::string settings_page_entity() {
     constexpr int kFirstTop = 668;
-    constexpr int kRowStep = 23;
+    constexpr int kRowStep = 22;
 
     std::string rows;
     int top = kFirstTop;

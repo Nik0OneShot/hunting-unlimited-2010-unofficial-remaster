@@ -289,6 +289,7 @@ BOOL present(SwapBuffersFn real, HDC dc) {
     update_cursor_clip();
     view_update_background_pause();
     if (g_main_window && !game_has_focus()) Sleep(kBackgroundSleepMs);
+    paper_draw();
     BOOL ok;
     {
         ProfileTimer timer(ProfileSection::Swap);
@@ -309,7 +310,7 @@ BOOL WINAPI hook_swap_interval(int) {
 
 template <typename Proc>
 void* wrap_gl(const char* name, Proc proc) {
-    return profile_wrap_gl(name, graphics_wrap_gl(name, reinterpret_cast<void*>(proc)));
+    return profile_wrap_gl(name, stand_wrap_gl(name, graphics_wrap_gl(name, reinterpret_cast<void*>(proc))));
 }
 
 PROC WINAPI hook_wgl_get_proc(LPCSTR name) {
@@ -355,6 +356,9 @@ LRESULT CALLBACK hook_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         logf("display: lost focus, game stays up");
         return 0;
     }
+    // Tapping alt on its own opens the window's menu, even with none to see, and that holds up the
+    // whole game until the next key. Alt-tab and alt-F4 don't come through here.
+    if (message == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_KEYMENU) return 0;
     return CallWindowProcA(g_real_window_proc, window, message, wparam, lparam);
 }
 

@@ -42,6 +42,22 @@ constexpr uintptr_t kMarkerSpots = 0x25ac0;
 constexpr uintptr_t kAddMarkerSpot = 0x25970;
 constexpr uintptr_t kOpeningSlot = 0x19b0d4;
 constexpr uintptr_t kFloorAt = 0xd4540;
+// A hunt has 11 goals at +0x10, a kind and a number each, and a list of bytes at +0x80 for each.
+// One of kind 1 keeps a byte for every animal, by its place in the manager's list, and that's sized
+// when the hunt starts (+0x92c9b). Animals brought in later are past the end of it, and a hit on one
+// stopped the game with an index overflow at +0x8fb83. So the lists grow with the animals.
+constexpr uintptr_t kHuntOf = 0x4f10;
+constexpr uintptr_t kResizeBytes = 0x7e00;
+constexpr size_t kHuntGoals = 0x10;
+constexpr size_t kGoalSize = 8;
+constexpr size_t kHuntGoalLists = 0x80;
+constexpr size_t kGoalListSize = 0x10;
+constexpr int kGoals = 11;
+constexpr int kGoalForEachAnimal = 1;
+// With every tag used, a hunt says its goals are accomplished, and to end it. In a free hunt the
+// animals can be stashed instead, so that's what it says.
+constexpr uintptr_t kAccomplishedText = 0x9069a;  // inside the mov of the message
+constexpr uintptr_t kGameAccomplished = 0x1a1e1c;
 
 // Slots that hold the engine's functions, once game.dll has loaded.
 constexpr uintptr_t kGetValue = 0x19aaa8;
@@ -89,6 +105,9 @@ constexpr size_t kPlaceRotation = 0x2c;
 constexpr size_t kStartPointPosition = 0x20;
 
 constexpr char kFreeHuntBriefing[] = "@@mm_freehunt@@";
+constexpr char kAccomplished[] = "@@g_lc_accomplished@@";
+constexpr char kBagsFull[] =
+    "<img src=/material/ui/ingame/x_ok.mat><br>Bags full! Stash your animals at a camp,<br>or press @@__key_ingamescore@@ to leave the hunt.";
 constexpr char kGameDefinitions[] = "/def/game.def";
 constexpr char kGameNameFormat[] = "%s_%s%.2i";
 
@@ -142,11 +161,10 @@ constexpr float kArriveFar = 1000.0f;
 constexpr float kInView = 0.5f;             // the cosine of how far off the view counts as in sight
 constexpr double kLookSeconds = 10.0;
 constexpr double kFirstHerdSeconds = 60.0;  // give the animals the hunt started with a chance
-constexpr double kHerdGapSeconds = 60.0;
-constexpr int kMostAlive = 60;
-constexpr int kMostInList = 120;            // the dead stay listed, so this stops a very long hunt growing
-constexpr int kHerdSizes[] = {2, 3, 5};     // freehunt_counts, the same for every species
-constexpr int kHerdGroups = 3;
+constexpr double kHerdGapSeconds = 30.0;
+constexpr float kPreferWater = 0.5f;        // how often a herd arrives near water, when it can
+constexpr int kMostNearby = 90;             // animals left far behind don't count, or none would arrive
+constexpr int kMostInList = 320;            // the dead stay listed, so this stops a very long hunt growing
 constexpr int kMostLoggedHerds = 200;
 
 constexpr float kMarkerStep = 20.0f;        // about what the marker can be told apart by on the map
@@ -239,6 +257,8 @@ using OpeningFn = void(__fastcall*)(char*, void*);
 using FloorAtFn = bool(__fastcall*)(void*, void*, Floor*, const float*);
 using PositionFn = const float*(__fastcall*)(void*, void*);
 using MoveToFn = void(__fastcall*)(void*, void*, const float*);
+using HuntOfFn = char*(__fastcall*)(char*, void*);
+using ResizeBytesFn = bool(__fastcall*)(char*, void*, unsigned);
 
 char* g_game = nullptr;
 bool g_ready = false;
@@ -257,6 +277,8 @@ char g_name_format[32] = {};
 int g_herds = 0;
 double g_next_look = 0.0;
 double g_next_herd = 0.0;
+char g_accomplished[256] = {};
+unsigned g_goal_lists_grown = 0;
 
 template <typename T>
 T& field(void* object, size_t offset) {
@@ -290,6 +312,7 @@ bool saved_dangerous(void* general, const char* key, unsigned index) {
 
 bool __fastcall hook_read_dangerous(void* general, void* unused, const char* key, unsigned index) {
     g_free_hunt = !strcmp(text_of(general, "briefing"), kFreeHuntBriefing);
+    strcpy_s(g_accomplished, g_free_hunt ? kBagsFull : kAccomplished);
     if (!g_free_hunt) return engine<GetBoolFn>(kGetBool)(general, unused, key, index);
     g_area = text_of(general, "area");
     g_hour = engine<GetIntFn>(kGetInt)(general, nullptr, "time", static_cast<unsigned>(-1));
@@ -343,10 +366,18 @@ void release_definitions() {
 }
 
 void __fastcall hook_create_animals(void* manager, void* unused, void* animals, void* definitions) {
+    if (g_free_hunt) wildlife_settle_herds(animals, static_cast<char*>(definitions));
     reinterpret_cast<CreateAnimalsFn>(g_game + kCreateAnimals)(manager, unused, animals, definitions);
+    lights_hunt_started();
     g_species.clear();
     g_spots.clear();
-    if (!g_free_hunt) return;
+    if (!g_free_hunt) {
+        wildlife_hunt_ended();
+        daytime_hunt_ended();
+        return;
+    }
+    wildlife_hunt_started(g_hour);
+    daytime_hunt_started();
     count_wanted(animals);
     read_spots();
     if (!g_pool_made) {
@@ -417,8 +448,11 @@ int bring_in_herd(char* manager, int species, int group, const float* hunter, co
     snprintf(g_name_format, sizeof(g_name_format), "sp%d_%s", ++g_herds, kGameNameFormat);
     HerdSlot slot = {nullptr, g_species[species].name.c_str(), 0, group, 0};
     const char* area = g_area.c_str();
+    wildlife_whole_herd(true);
     reinterpret_cast<GenerateFn>(g_game + kGenerateAnimals)(g_pool, definitions, hunter, &slot, 1, &area, g_hour, nullptr);
+    wildlife_whole_herd(false);
     strcpy_s(g_name_format, kGameNameFormat);
+    wildlife_settle_herds(g_pool, definitions);
 
     float centre[3] = {};
     bool have_centre = false;
@@ -446,16 +480,23 @@ int bring_in_herd(char* manager, int species, int group, const float* hunter, co
 // something. The fear itself still fades slowly, so one that has been scared stays wary.
 void __fastcall hook_weigh_needs(char* brain, void* unused) {
     const auto weigh = reinterpret_cast<WeighNeedsFn>(g_game + kWeighNeeds);
-    const bool afraid = field<float>(brain, kBrainHunterFear) >= kThreat || field<float>(brain, kBrainEnemyFear) >= kThreat;
-    if (!g_free_hunt || !g_cfg.free_hunt_calm_animals || afraid) {
+    if (!g_free_hunt) {
         weigh(brain, unused);
         return;
     }
-    float& stress = field<float>(brain, kBrainStress);
-    const float held = stress;
-    stress = 0.0f;
-    weigh(brain, unused);
-    stress += held;
+    WildNeeds needs;
+    wildlife_before_needs(brain, &needs);
+    const bool afraid = field<float>(brain, kBrainHunterFear) >= kThreat || field<float>(brain, kBrainEnemyFear) >= kThreat;
+    if (!g_cfg.free_hunt_calm_animals || afraid) {
+        weigh(brain, unused);
+    } else {
+        float& stress = field<float>(brain, kBrainStress);
+        const float held = stress;
+        stress = 0.0f;
+        weigh(brain, unused);
+        stress += held;
+    }
+    wildlife_after_needs(brain, needs);
 }
 
 // The spots a marker can sit on beyond the start points themselves, filling in around them. A
@@ -568,12 +609,15 @@ void __fastcall hook_opening(char* hunt, void* unused) {
     g_real_opening(hunt, unused);
 }
 
-bool read_view(float* position, float* forward) {
+char* view_place() {
     char* hunt = reinterpret_cast<CurrentHuntFn>(g_game + kCurrentHunt)();
-    if (!hunt) return false;
+    if (!hunt) return nullptr;
     void* view = method<ObjectFn>(hunt, kHuntView)(hunt, nullptr);
-    if (!view) return false;
-    char* place = method<ObjectFn>(view, kViewPlace)(view, nullptr);
+    return view ? method<ObjectFn>(view, kViewPlace)(view, nullptr) : nullptr;
+}
+
+bool read_view(float* position, float* forward) {
+    char* place = view_place();
     if (!place) return false;
     memcpy(position, place + kPlacePosition, 3 * sizeof(float));
     const float ahead[3] = {0.0f, 0.0f, -1.0f};
@@ -617,14 +661,9 @@ int pick_species(const Species* species, int count) {
     return best;
 }
 
-int herd_group(int short_of) {
-    int group = 0;
-    while (group + 1 < kHerdGroups && kHerdSizes[group + 1] <= short_of) ++group;
-    return group;
-}
-
-// A place in the ring around the hunter, out of view if one exists. `roll` is between 0 and 1.
-int pick_spot(const Spot* spots, int count, const float* hunter, const float* forward, float roll) {
+// A place in the ring around the hunter, out of view if one exists. `roll` is between 0 and 1, and
+// `liked` marks places worth arriving at more often, or is null.
+int pick_spot(const Spot* spots, int count, const float* hunter, const float* forward, float roll, const std::vector<char>* liked) {
     std::vector<int> hidden;
     std::vector<int> ring;
     const float ahead = sqrtf(forward[0] * forward[0] + forward[2] * forward[2]);
@@ -639,8 +678,39 @@ int pick_spot(const Spot* spots, int count, const float* hunter, const float* fo
     }
     const std::vector<int>& choices = hidden.empty() ? ring : hidden;
     if (choices.empty()) return -1;
+    if (liked && roll < kPreferWater) {
+        std::vector<int> better;
+        for (const int choice : choices) {
+            if ((*liked)[choice]) better.push_back(choice);
+        }
+        if (!better.empty()) {
+            const int pick = static_cast<int>(roll / kPreferWater * better.size());
+            return better[pick >= static_cast<int>(better.size()) ? better.size() - 1 : pick];
+        }
+    }
     const int pick = static_cast<int>(roll * choices.size());
     return choices[pick >= static_cast<int>(choices.size()) ? choices.size() - 1 : pick];
+}
+
+// The new places in a goal's list are zero, as the hunt starts them.
+bool grow_goal_list(char* list, unsigned animals) {
+    const unsigned had = field<unsigned>(list, kListCount);
+    if (had >= animals) return false;
+    if (!reinterpret_cast<ResizeBytesFn>(g_game + kResizeBytes)(list, nullptr, animals)) return false;
+    if (field<unsigned>(list, kListCount) != animals) return false;
+    memset(field<char*>(list, kListItems) + had, 0, animals - had);
+    return true;
+}
+
+void grow_goal_lists(char* manager) {
+    char* game = reinterpret_cast<CurrentHuntFn>(g_game + kCurrentHunt)();
+    char* hunt = game ? reinterpret_cast<HuntOfFn>(g_game + kHuntOf)(game, nullptr) : nullptr;
+    if (!hunt) return;
+    const unsigned animals = field<unsigned>(manager, kManagerCount);
+    for (int goal = 0; goal < kGoals; ++goal) {
+        if (field<int>(hunt, kHuntGoals + goal * kGoalSize) != kGoalForEachAnimal) continue;
+        if (grow_goal_list(hunt + kHuntGoalLists + goal * kGoalListSize, animals)) ++g_goal_lists_grown;
+    }
 }
 
 void look_around(double now) {
@@ -650,26 +720,38 @@ void look_around(double now) {
     if (!manager || !read_view(hunter, forward)) return;
 
     const int alive = count_alive(manager, hunter);
-    if (now < g_next_herd || alive >= kMostAlive) return;
+    int nearby = 0;
+    for (const Species& kind : g_species) nearby += kind.nearby;
+    if (now < g_next_herd || nearby >= kMostNearby) return;
     if (field<unsigned>(manager, kManagerCount) >= static_cast<unsigned>(kMostInList)) return;
 
     const int species = pick_species(g_species.data(), static_cast<int>(g_species.size()));
     if (species < 0) return;
     const float roll = static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) + 1.0f);
-    const int spot = pick_spot(g_spots.data(), static_cast<int>(g_spots.size()), hunter, forward, roll);
+    std::vector<char> near_water(g_spots.size());
+    bool any_near_water = false;
+    for (size_t i = 0; i < g_spots.size(); ++i) {
+        near_water[i] = wildlife_near_water(g_spots[i].position);
+        any_near_water = any_near_water || near_water[i];
+    }
+    const int spot = pick_spot(g_spots.data(), static_cast<int>(g_spots.size()), hunter, forward, roll, any_near_water ? &near_water : nullptr);
     if (spot < 0) return;
+    float arrive[3];
+    memcpy(arrive, g_spots[spot].position, sizeof(arrive));
+    const bool climbed = wildlife_high_ground(g_species[species].name.c_str(), hunter, kArriveNear, arrive);
 
+    const int size = wildlife_herd_size(g_species[species].name.c_str(), g_species[species].wanted - g_species[species].nearby);
+    if (size <= 0) return;
     const double started = now_seconds();
-    const int group = herd_group(g_species[species].wanted - g_species[species].nearby);
-    const int added = bring_in_herd(manager, species, group, hunter, g_spots[spot].position);
+    const int added = bring_in_herd(manager, species, wildlife_herd_group(size), hunter, arrive);
     g_next_herd = now + kHerdGapSeconds;
+    grow_goal_lists(manager);
     if (g_herds <= kMostLoggedHerds) {
-        const float* place = g_spots[spot].position;
-        const float x = place[0] - hunter[0];
-        const float z = place[2] - hunter[2];
-        logf("free hunt: %d %s arrived %.0f m away in %.1f ms, %d of %d around, %d alive", added,
-             g_species[species].name.c_str(), sqrtf(x * x + z * z), (now_seconds() - started) * 1000.0,
-             g_species[species].nearby, g_species[species].wanted, alive + added);
+        const float x = arrive[0] - hunter[0];
+        const float z = arrive[2] - hunter[2];
+        logf("free hunt: %d %s arrived %.0f m away%s in %.1f ms, %d of %d around, %d alive, goal lists grown %u times", added,
+             g_species[species].name.c_str(), sqrtf(x * x + z * z), climbed ? ", up high" : "", (now_seconds() - started) * 1000.0,
+             g_species[species].nearby, g_species[species].wanted, alive + added, g_goal_lists_grown);
     }
 }
 
@@ -732,7 +814,25 @@ void free_hunt_settings_changed() {
     if (g_ready) apply_opening();
 }
 
+bool free_hunt_running() { return g_free_hunt && view_hunt_running(); }
+
+bool free_hunt_read_view(float* position, float* forward) { return g_game && read_view(position, forward); }
+
+bool free_hunt_water_depth(const float* place, float* depth, float* ground) {
+    if (!g_game) return false;
+    char* hunt = reinterpret_cast<CurrentHuntFn>(g_game + kCurrentHunt)();
+    void* scene = hunt ? field<void*>(hunt, kHuntScene) : nullptr;
+    Floor floor = {};
+    if (!scene || !reinterpret_cast<FloorAtFn>(g_game + kFloorAt)(scene, nullptr, &floor, place)) return false;
+    *depth = floor.depth;
+    if (ground) *ground = floor.ground;
+    return true;
+}
+
 void free_hunt_end_frame() {
+    daytime_end_frame();
+    wildlife_end_frame();
+    stash_end_frame();
     if (!g_ready || g_stopped || !g_cfg.free_hunt_animals || g_species.empty()) return;
     if (!view_hunt_running()) return;
     const double now = now_seconds();
@@ -752,11 +852,15 @@ void free_hunt_attach_game(HMODULE game, bool verified) {
     const void* format_was = g_game + kNameFormat;
     const void* format_now = g_name_format;
     const bool names = patch_bytes(g_game + kNameFormatPush, &format_was, &format_now, sizeof(format_now));
+    strcpy_s(g_accomplished, kAccomplished);
+    const void* accomplished_was = g_game + kGameAccomplished;
+    const void* accomplished_now = g_accomplished;
+    const bool bags = patch_bytes(g_game + kAccomplishedText, &accomplished_was, &accomplished_now, sizeof(accomplished_now));
     const bool defaults = install_defaults();
     const bool dangerous = hook_dangerous();
     const bool animals = patch_call(g_game + kCreateAnimalsCall, g_game + kCreateAnimals,
                                     reinterpret_cast<const void*>(&hook_create_animals));
-    logf("free hunt: defaults=%d dangerous=%d animals=%d names=%d", defaults, dangerous, animals, names);
+    logf("free hunt: defaults=%d dangerous=%d animals=%d names=%d bags=%d", defaults, dangerous, animals, names, bags);
 
     const bool closest = set_float(kClosestHerd, kGameClosestHerd, kClosestHerdDistance);
     const uint32_t calm = 0;
@@ -788,10 +892,6 @@ int free_hunt_test() {
     species[0].nearby = 5;
     if (pick_species(species, 3) != -1) return 3;
 
-    if (herd_group(1) != 0 || herd_group(2) != 0) return 4;
-    if (herd_group(3) != 1 || herd_group(4) != 1) return 5;
-    if (herd_group(5) != 2 || herd_group(40) != 2) return 6;
-
     const float hunter[3] = {0.0f, 0.0f, 0.0f};
     const float forward[3] = {0.0f, 0.0f, -1.0f};
     const Spot spots[] = {
@@ -800,10 +900,19 @@ int free_hunt_test() {
         {{0.0f, 0.0f, 800.0f}},    // behind
         {{3000.0f, 0.0f, 0.0f}},   // too far
     };
-    if (pick_spot(spots, 4, hunter, forward, 0.0f) != 2) return 7;
-    if (pick_spot(spots, 4, hunter, forward, 0.999f) != 2) return 8;
-    if (pick_spot(spots, 2, hunter, forward, 0.5f) != 1) return 9;  // only in sight, so it's that or nothing
-    if (pick_spot(spots, 1, hunter, forward, 0.5f) != -1) return 10;
+    if (pick_spot(spots, 4, hunter, forward, 0.0f, nullptr) != 2) return 7;
+    if (pick_spot(spots, 4, hunter, forward, 0.999f, nullptr) != 2) return 8;
+    if (pick_spot(spots, 2, hunter, forward, 0.5f, nullptr) != 1) return 9;  // only in sight, so it's that or nothing
+    if (pick_spot(spots, 1, hunter, forward, 0.5f, nullptr) != -1) return 10;
+    const Spot several[] = {
+        {{0.0f, 0.0f, 700.0f}},
+        {{0.0f, 0.0f, 800.0f}},
+        {{0.0f, 0.0f, 900.0f}},
+    };
+    const std::vector<char> by_water = {0, 0, 1};
+    if (pick_spot(several, 3, hunter, forward, 0.1f, &by_water) != 2) return 4;    // a low roll goes to the water
+    if (pick_spot(several, 3, hunter, forward, 0.9f, &by_water) != 2) return 5;    // and a high one is any of them
+    if (pick_spot(several, 3, hunter, forward, 0.6f, &by_water) != 1) return 6;
 
     g_species.clear();
     Species deer;

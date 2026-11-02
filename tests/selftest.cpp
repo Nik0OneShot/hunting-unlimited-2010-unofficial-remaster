@@ -321,6 +321,13 @@ int main() {
     auto test_free_hunt = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_free_hunt"));
     auto test_terrain = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_terrain"));
     auto test_occlusion = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_occlusion"));
+    auto test_freelook = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_freelook"));
+    auto test_stand = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_stand"));
+    auto test_paper = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_paper"));
+    auto test_wildlife = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_wildlife"));
+    auto test_daytime = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_daytime"));
+    auto test_lights = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_lights"));
+    auto test_stash = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_stash"));
     auto test_noise = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_noise"));
     auto test_step = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_step"));
     auto test_ground = reinterpret_cast<unsigned(__cdecl*)(unsigned)>(GetProcAddress(core, "longshot_test_ground"));
@@ -333,7 +340,7 @@ int main() {
                          test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
                          test_pause && test_turn && test_row_fits && test_slow &&
                          test_multisample && test_post && test_detail && test_grass && test_glare && test_weapons && test_vehicle &&
-                         test_free_hunt && test_terrain && test_occlusion && test_noise && test_step && test_ground && test_drift;
+                         test_free_hunt && test_terrain && test_occlusion && test_freelook && test_stand && test_paper && test_wildlife && test_daytime && test_lights && test_stash && test_noise && test_step && test_ground && test_drift;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -403,6 +410,10 @@ int main() {
     check("zooming in extends them, as in the game", about(test_detail(80.0f, 40.0f, 1.0f), 2.31f));
     check("and LOD distance multiplies them", about(test_detail(80.0f, 80.0f, 2.0f), 2.0f));
     check("LOD distance can't reach zero", test_detail(80.0f, 80.0f, 0.0f) > 0.2f);
+    check("zoomed in, LOD distance adds up to 8 times", about(test_detail(80.0f, 20.0f, 3.0f), 8.0f));
+    check("never less than the zoom alone", about(test_detail(80.0f, 10.0f, 3.0f), 9.59f));
+    check("or than LOD distance alone", about(test_detail(80.0f, 80.0f, 10.0f), 10.0f));
+    check("and below that it's as before", about(test_detail(80.0f, 40.0f, 3.0f), 6.92f));
     check("the sun's glare ignores a wide field of view", about(test_glare(125.0f), 50.0f));
     check("and narrows further through a scope", about(test_glare(10.0f), 10.0f));
     check("grass keeps the game's fade by default", about(test_grass(0.0f), 30.0f));
@@ -426,6 +437,27 @@ int main() {
     const int occlusion = test_occlusion();
     fprintf(g_out, "INFO  occlusion check result: %d\n", occlusion);
     check("the ground hides what's behind it, and nothing else", occlusion == 0);
+    const int freelook = test_freelook();
+    fprintf(g_out, "INFO  freelook check result: %d\n", freelook);
+    check("freelook stops at its limits and comes back", freelook == 0);
+    const int stand = test_stand();
+    fprintf(g_out, "INFO  tree stand check result: %d\n", stand);
+    check("the leaf program changes, and the driver takes it", stand == 0);
+    const int paper = test_paper();
+    fprintf(g_out, "INFO  calculator and range sheet check result: %d\n", paper);
+    check("the calculator adds up, and both screens draw", paper == 0);
+    const int wildlife = test_wildlife();
+    fprintf(g_out, "INFO  wildlife check result: %d\n", wildlife);
+    check("herds, drinking hours and bird chances add up", wildlife == 0);
+    const int daytime = test_daytime();
+    fprintf(g_out, "INFO  day and night check result: %d\n", daytime);
+    check("the clock wraps round, and night gets moonlight", daytime == 0);
+    const int lights = test_lights();
+    fprintf(g_out, "INFO  lights check result: %d\n", lights);
+    check("the flashlight and lantern go in the list, and suit the dark", lights == 0);
+    const int stash = test_stash();
+    fprintf(g_out, "INFO  stash check result: %d\n", stash);
+    check("camps are found on the map, and stashing has its label", stash == 0);
     check("standing still makes no noise", about(test_noise(0.0f), 0.0f));
     check("walking keeps the game's noise", about(test_noise(1.9f), 0.7f));
     check("running is as loud as it gets", about(test_noise(4.5f), 1.0f) && about(test_noise(9.0f), 1.0f));

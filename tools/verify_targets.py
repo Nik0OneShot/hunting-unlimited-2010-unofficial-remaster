@@ -77,6 +77,26 @@ def constants(text):
     }
 
 
+def wildlife_bird_kinds(text):
+    return int(re.search(r"kBirdKinds = (\d+)", text).group(1))
+
+
+def wildlife_lure_goal(text):
+    return int(re.search(r"kLureGoal = (\d+)", text).group(1))
+
+
+def wildlife_goal(text, name):
+    return int(re.search(name + r" = (\d+)", text).group(1))
+
+
+def wildlife_water_geom(text):
+    return int(re.search(r"kWaterGeom = (\d+)", text).group(1))
+
+
+def wildlife_vulture(text):
+    return int(re.search(r"kVulture = (\d+)", text).group(1))
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -289,6 +309,29 @@ def main():
             f"the tyres' grip is checked at {site:#x}",
         )
 
+    vehicle_all = {m.group(1): int(m.group(2), 0) for m in re.finditer(r"constexpr (?:uint32_t|uintptr_t|size_t) (\w+) = (0x[0-9a-fA-F]+|\d+);", vehicle_text)}
+    small = lambda n: f"{n:#x}" if n > 9 else str(n)  # as capstone writes them
+    world_image = bytes(world_game.image)
+    def method(at):
+        return struct.unpack_from("<I", world_image, 0x1b1ad8 + at)[0] - world_game.base
+    def code(at, count=8):
+        return [f"{i.mnemonic} {i.op_str}" for i in world_game.disasm(at, count * 8)[:count]]
+    actor_body = f"mov eax, dword ptr [ecx + {vehicle_all['kActorBody']:#x}]"
+    report(f"mov dword ptr [esi], {world_game.base + 0x1b1ad8:#x}" in code(method(0)) and code(method(8))[0] == actor_body, "a dynamic actor holds ODE's body")
+    report(method(vehicle_all["kMethodVelocity"]) == 0x1245a0 and code(0x1245a0)[0] == actor_body and f"call {world_game.base + 0x10b0e0:#x}" in code(0x1245a0) and code(0x10b102, 1)[0] == f"lea eax, [esi + {vehicle_all['kBodyVelocity']:#x}]", "its velocity is its body's")
+    report(f"call {world_game.base + 0x10b110:#x}" in code(method(vehicle_all["kMethodSpin"])) and code(0x10b132, 1)[0] == f"lea eax, [esi + {vehicle_all['kBodySpin']:#x}]", "and so is its spin")
+    report(f"call {world_game.base + 0x10b030:#x}" in code(method(vehicle_all["kMethodSetSpin"]), 12) and f"mov dword ptr [esi + {vehicle_all['kBodySpin']:#x}], eax" in code(0x10b030, 16), "which it sets straight")
+    report("call dword ptr [edx + 0x80]" in code(vehicle_all["kSetVelocity"], 40) and f"call {world_game.base + 0x10afe0:#x}" in code(method(0x80), 12), "setting its velocity goes the same way")
+    report(code(0x10c786, 1)[0] == "lea ebp, [esi + 0xd8]" and code(0x10c794, 1)[0] == f"lea eax, [esi + {vehicle_all['kBodyRotation']:#x}]", "a body's rotation is just before its quaternion")
+    report(code(0x10b552, 2) == [f"mov eax, dword ptr [esi + {vehicle_all['kBodyFlags']:#x}]", "shr eax, 2"] and vehicle_all["kBodyDisabled"] == 4, "and it's disabled by its flags' 4")
+    report(code(0x10bb54, 2) == ["mov dword ptr [esi + 0x20], edi", "mov dword ptr [esi + 0x2c], ebx"] and code(0x10bb5c, 2) == [f"mov edx, dword ptr [edi + {small(vehicle_all['kBodyJoints'])}]", "lea eax, [esi + 0x28]"] and 0x2c - 0x28 == vehicle_all["kJointOtherBody"], "each of its joints names the body at the other end")
+    report(code(0x9a928, 1)[0] == "push 0x43960000" and code(0x9a94b, 1)[0] == f"call {world_game.base + 0x97c50:#x}", "the ATV is 300 kg")
+    view_update = struct.unpack_from("<I", world_image, vehicle_all["kVehicleViewUpdateSlot"])[0] - world_game.base
+    report(view_update == 0x15360 and code(0x15421, 1)[0] == f"call {world_game.base + vehicle_all['kVehicleViewTarget']:#x}" and code(0x15157, 3) == ["mov ecx, dword ptr [edi + 0x160]", "mov eax, dword ptr [ecx]", "call dword ptr [eax + 0x3c]"], "a vehicle's view finds where the vehicle is each update")
+    report(code(0x15426, 2) == ["fld dword ptr [esp + 0x34]", f"fmul dword ptr [{world_game.base + 0x19b7cc:#x}]"] and int_at(0x19b7cc) == 0x40800000 and code(0x15445, 1)[0] == f"fmul dword ptr [esi + {vehicle_all['kViewFollowing']:#x}]", "and eases toward it by 4 times the frame's seconds")
+    report(code(0x151e0, 1)[0] == f"lea eax, [ecx + {vehicle_all['kViewFollowing']:#x}]" and "call dword ptr [eax + 0x50]" in code(0x14cb0, 20), "which is what the view goes round")
+    report(code(0x1549a, 1)[0] == "ret 4" and code(0x151da, 1)[0] == "ret 4", "its update takes the frame's seconds, and finding the vehicle takes where to put it")
+
     print("--- distances")
     detail_text = source("detail.cpp")
     detail = constants(detail_text)
@@ -401,6 +444,15 @@ def main():
         name, value = struct.unpack_from("<II", walk_image, offset)
         return (text_at(name - walk_game.base), text_at(value - walk_game.base)) if name else None
     report(pair_at(free["kDefaults"]) == ("alberta_last_density00", "2"), "a new profile's settings start as expected")
+    def ops(at, count):
+        return [f"{i.mnemonic} {i.op_str}" for i in walk_game.disasm(at, count * 8)[:count]]
+    free_all = {m.group(1): int(m.group(2), 0) for m in re.finditer(r"constexpr (?:uintptr_t|size_t|int) (\w+) = (0x[0-9a-fA-F]+|\d+);", free_text)}
+    report(ops(0x92c66, 2) == [f"lea eax, [ebp + {free_all['kHuntGoals']:#x}]", f"lea esi, [ebp + {free_all['kHuntGoalLists']:#x}]"] and ops(0x92c73, 1) == [f"mov dword ptr [esp + 0x1c], {free_all['kGoals']:#x}"] and ops(0x92ce0, 1) == [f"add edx, {free_all['kGoalSize']}"] and ops(0x92ce3, 1) == [f"add esi, {free_all['kGoalListSize']:#x}"], "a hunt has 11 goals, each with a list")
+    report(ops(0x92c84, 3) == ["mov eax, dword ptr [ecx]", "dec eax", "je 0x10092c90".replace("0x10092c90", f"{walk_game.base + 0x92c90:#x}")] and ops(0x92c90, 2) == [f"call {walk_game.base + 0xbab80:#x}", "mov eax, dword ptr [eax + 8]"] and ops(0x92c9b, 1) == [f"call {walk_game.base + free_all['kResizeBytes']:#x}"], "and one of kind 1 is sized to the animals at the start")
+    report(ops(0x8fb4e, 1) == ["mov eax, dword ptr [edi + 0x10]"] and ops(0x8fb5f, 1) == ["mov eax, dword ptr [edi + 0x88]"] and ops(0x8fb43, 2) == [f"call {walk_game.base + 0xad680:#x}", "mov esi, dword ptr [eax + 0x114]"], "a hit looks up the first goal's list by the animal's place")
+    report(ops(0xbd7c6, 1) == [f"call {walk_game.base + free_all['kAddAnimal']:#x}"] and ops(0xbd5b8, 2) == ["sub esi, edx", "sar esi, 2"], "which is where adding it put it in the manager's list")
+    report(ops(0x7e46, 1) == ["mov dword ptr [esi + 8], ebx"] and ops(0x7e4e, 1) == ["ret 4"] and ops(0x7e7d, 1) == ["mov dword ptr [esi + 8], ebx"], "resizing a list of bytes just sets its count")
+    report(ops(free_all["kAccomplishedText"] - 4, 1) == [f"mov dword ptr [esp + 0x40], {walk_game.base + free_all['kGameAccomplished']:#x}"] and text_at(free_all["kGameAccomplished"]) == "@@g_lc_accomplished@@", "the hunt says its goals are accomplished from one place")
     first = walk_game.disasm(free["kDefaultsFirst"] - 1, 5)[0]
     walk = walk_game.disasm(free["kDefaultsWalk"] - 1, 5)[0]
     defaults_at = f"{walk_game.base + free['kDefaults']:#x}"
@@ -965,6 +1017,460 @@ def main():
     report(all(most_number[f] < counts[f] for f in most_number), "and every chunk's number is under the count in its .lnd")
     taller = float(re.search(r"kChunkTaller = ([\d.]+)f", occlusion_text).group(1))
     report(tallest <= taller, f"chunks allow for the tallest plant on any map, {tallest:.1f} m as placed")
+
+    print("--- the player")
+    walking_values = constants(source("walking.cpp"))
+    report(walk_game.disasm(0xe398, 6)[0].op_str == f"dword ptr [esi], {walk_game.base + walking_values['kHunterTable']:#x}", "a hunter has the table of methods expected")
+    hunter_class = struct.unpack_from("<I", walk_image, 0x19ba44 + 4)[0] - walk_game.base
+    report(hunter_class == 0xe510 and call_at(0xe54b, 0xe360), "and is what that class's descriptor makes")
+    report(walk_game.disasm(0x3fae, 5)[0].op_str == f"{walk_game.base + 0x19ba44:#x}" and walk_game.disasm(0x3fcf, 6)[0].op_str == "dword ptr [esi + 0x100], eax", "which the hunt keeps as its player")
+    report(walk_game.disasm(0x9256, 6)[0].op_str == f"dword ptr [esi], {walk_game.base + 0x19b5b0:#x}" and walk_game.disasm(0x924b, 5)[0].op_str == f"{walk_game.base + 0x19bc2c:#x}", "while another mode keeps something else there")
+    report(call_at(0xe828, 0xe730) and walk_game.disasm(0xe767, 6)[0].op_str == f"dword ptr [esi], {walk_game.base + 0x19bc48:#x}", "which isn't a hunter")
+    hunter_tables = [i for i in walk_game.disasm(0xe2a0, 0x8000) if i.mnemonic == "mov" and i.op_str.endswith(f", {walk_game.base + walking_values['kHunterTable']:#x}")]
+    report(len(hunter_tables) == 1, "and nothing else starts out as one, so no other class is a kind of hunter")
+
+    print("--- wildlife")
+    wildlife_text = source("wildlife.cpp")
+    wildlife = constants(wildlife_text)
+    impact_entries = struct.unpack_from("<14I", walk_image, wildlife["kImpactTable"])
+    report(impact_entries[8 - 3] == walk_game.base + wildlife["kNoImpact"], "a bullet hitting a tree throws nothing up")
+    report(walk_game.disasm(wildlife["kDirtImpact"], 5)[0].op_str == f"esi, {walk_game.base + 0x1a85a4:#x}" and text_at(0x1a85a4) == "emitter.throw.dirt", "and dirt has its own puff")
+    report(walk_game.disasm(0xd67dc, 7)[0].op_str == f"dword ptr [eax*4 + {walk_game.base + wildlife['kImpactTable']:#x}]" and walk_game.disasm(0xd67cc, 3)[0].op_str == "eax, -3", "the table starts at surface 3")
+    report(walk_game.disasm(0xd6fd2, 8)[0].op_str == "dword ptr [esp + 0x1c], 8", "and surface 8 is what a plant gives")
+    report(walk_game.disasm(0xd6fbc, 5)[0].op_str == f"{walk_game.base + 0x1a9320:#x}", "going by its class")
+    report(walk_game.disasm(wildlife["kMostAnimalsCheck"] - 2, 3)[0].op_str == "eax, 0x28", "the generator stops at 40 animals")
+    report(walk_game.disasm(wildlife["kTrimTotal"] - 1, 5)[0].op_str == "edi, 0x28", "and trims down to that")
+    report(walk_game.disasm(wildlife["kTrimScale"] - 2, 6)[0].op_str == f"dword ptr [{walk_game.base + wildlife['kFortyFloat']:#x}]", "as a float too")
+    report(struct.unpack_from("<f", walk_image, wildlife["kFortyFloat"])[0] == 40.0, "which is 40")
+    group_call = walk_game.disasm(wildlife["kGroupRollCall"] - 2, 6)[0]
+    report(group_call.mnemonic == "call" and group_call.op_str == f"dword ptr [{walk_game.base + wildlife['kRandom']:#x}]", "a group's size is rolled where expected")
+    report(walk_game.imports[("p3core.dll", "?rand@randomizer_t@prism@@QAEMXZ")] == walk_game.base + wildlife["kRandom"], "with the engine's random numbers")
+    group_ops = walk_game.disasm(wildlife["kGroupRollCall"] + 4, 16)
+    report(group_ops[0].op_str == f"dword ptr [{walk_game.base + 0x1a5b48:#x}]" and group_ops[1].op_str == f"dword ptr [{walk_game.base + 0x1a5b44:#x}]", "and scaled as expected")
+    report(abs(struct.unpack_from("<f", walk_image, 0x1a5b48)[0] - 0.95) < 1e-3 and abs(struct.unpack_from("<f", walk_image, 0x1a5b44)[0] - 0.05) < 1e-3, "by 0.95, plus 0.05")
+    report(call_at(wildlife["kFireCall"], wildlife["kFire"]), "a shot is fired where expected")
+    report(next(i for i in walk_game.disasm(wildlife["kFire"], 0x340) if i.mnemonic == "ret").op_str == "0x14", "with 5 values")
+    report(walk_game.disasm(0xc8e0d, 6)[0].op_str == "dword ptr [edi + 0x84]" and walk_game.disasm(0xc8e15, 6)[0].op_str == "dword ptr [edi + 0x88]", "birds appear between the distances in their file")
+    report(walk_game.disasm(0xc920e, 3)[0].op_str == f"dword ptr [ebp + {wildlife['kBirdTimer']:#x}]" and walk_game.disasm(0xc9211, 3)[0].op_str == f"dword ptr [ebp + {wildlife['kBirdPeriod']:#x}]", "when a timer reaches their period")
+    report(walk_game.disasm(0xc921e, 6)[0].op_str == f"eax, dword ptr [ebp + {wildlife['kBirdMost']:#x}]", "unless there are enough of them")
+    report(walk_game.disasm(0xc8570, 3)[0].op_str == f"eax, dword ptr [edi + {wildlife['kBirdChanceCount']:#x}]" and walk_game.disasm(0xc859c, 3)[0].op_str == f"eax, dword ptr [edi + {wildlife['kBirdChances']:#x}]", "and the kind is rolled from a table")
+    report(walk_game.disasm(0xbd9cd, 3)[0].op_str == f"esi, dword ptr [ebp + {wildlife['kManagerBirds']:#x}]", "the animal manager holds the birds")
+    report(walk_game.disasm(0xbb310, 6)[0].op_str == f"eax, dword ptr [esi + {wildlife['kManagerAreas']:#x}]" and walk_game.disasm(0xbb2e4, 6)[0].op_str == f"eax, dword ptr [esi + {wildlife['kManagerAreaCount']:#x}]", "and the food and water areas")
+    report(walk_game.disasm(0xe28f0, 3)[0].op_str == f"eax, dword ptr [ecx + {wildlife['kAreaResource']:#x}]", "whose kind is where expected")
+    report(walk_game.disasm(0xbb36e, 5)[0].mnemonic == "call" and walk_game.disasm(0xbb373, 3)[0].op_str == "eax, 1", "with 1 for water")
+    report(walk_game.disasm(0xbb389, 3)[0].op_str == "ecx, [ebp + 8]" and "kAreaPosition = 8;" in wildlife_text, "and whose place is where expected")
+    report(walk_game.disasm(0xc5811, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalMate']:#x}], eax", "an animal keeps its mate where expected")
+    report(walk_game.disasm(0xb5f29, 6)[0].op_str == f"al, byte ptr [ecx + {wildlife['kAnimalHurt']:#x}]", "and whether it's hurt")
+    report(walk_game.disasm(0xb5ef2, 6)[0].op_str == f"ecx, dword ptr [esi + {wildlife['kBrainAnimal']:#x}]", "a brain knows its animal")
+    weigh_ops = "\n".join(i.op_str for i in walk_game.disasm(0xb66a0, 0x9a))
+    for name, what in (("kBrainThirst", "thirst"), ("kBrainTiredness", "tiredness"), ("kBrainHunger", "hunger"), ("kBrainPrey", "the pull of prey"), ("kBrainHunterFear", "fear of the hunter"), ("kBrainEnemyFear", "fear of other animals")):
+        report(f"[esi + {wildlife[name]:#x}]" in weigh_ops, f"needs are worked out from {what}")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        species_text = base.read("def/game.def").decode("latin-1")
+        kinds = re.findall(r'\{"(\w+)", \d+, \d+, \d+, \d+, [\d.]+f, (?:true|false), (?:true|false), (?:true|false)\}', wildlife_text)
+        game_kinds = re.findall(r"def (\w+):/species_kind", species_text)
+        report(sorted(kinds) == sorted(game_kinds), f"all {len(game_kinds)} species have numbers")
+        missing_young = [name for name in game_kinds if not re.search(rf'def {name}:/species_kind.*?gender:"3"', species_text, re.S)]
+        report(not missing_young, "and all of them have a young type")
+        horned_young = re.findall(r'gender:"3"[^}]*?antlers:"([^"]+)"|antlers:"([^"]+)"[^}]*?gender:"3"', species_text)
+        horn_files = sorted({(a or b).lstrip("/") for a, b in horned_young})
+        horn_names = re.search(r'kYoungHorns\[\] = "simple_beam_part(\d+)"', wildlife_text)
+        report(len(horn_files) >= 4 and horn_names.group(1) == "0" and all(".smplbeam0" in base.read(n).decode("latin-1") for n in horn_files), f"all {len(horn_files)} kinds of young with horns have the shape they're given")
+        report(species_text.count(':0.3:food"') == 85, "hunters are drawn to carcasses by the amount expected")
+        report('effect_range:"400"' in base.read("def/basedefs.def").decode("latin-1"), "from the range expected")
+        bird_files = [n for n in base.namelist() if n.endswith("/ambient_animals.sii")]
+        bird_lines = ("spawn_frequency_seconds: 7.0f", "max_simultaneous_animals: 5", "min_spawn_distance: 10.0f", "max_spawn_distance: 20.0f")
+        report(all(all(line in base.read(n).decode("latin-1") for line in bird_lines) for n in bird_files), f"all {len(bird_files)} bird files say what's expected")
+        links = re.findall(r"species_links\[\]: (\S+)", base.read(bird_files[0]).decode("latin-1"))
+        report(len(links) == wildlife_bird_kinds(wildlife_text) and links[wildlife_vulture(wildlife_text)] == "ambient.animal.vulture", "and vultures are where expected in their list")
+
+    report(wildlife["kMusicSlot"] == 0x19b098 + 0x30 and struct.unpack_from("<I", walk_image, wildlife["kMusicSlot"])[0] == walk_game.base + 0x2ed0, "the hunt plays its stings through the method expected")
+    report(walk_image[0x2f1c:0x2f1f] == bytes.fromhex("c20800"), "which takes two values")
+    music_call = walk_game.disasm(0xb2797, 14)
+    report(music_call[0].op_str == "0x3f800000" and music_call[1].op_str == "1" and music_call[3].op_str == "dword ptr [edx + 0x30]", "and a hunter starting on an animal plays sting 1")
+    report(walk_game.disasm(0xb15ba, 2)[0].op_str == "2", "where one starting on the hunter plays sting 2")
+    report(text_at(struct.unpack_from("<I", walk_image, 0x1e315c)[0] - walk_game.base) == "animal_attacks_animal_filename", "and the file names that one")
+    weigh_goal = [i for i in walk_game.disasm(0xb66a0, 0x134) if i.mnemonic == "call"]
+    report(any(i.op_str == f"{walk_game.base + 0xb4bc0:#x}" for i in weigh_goal), "goals start while needs are being weighed")
+
+    print("--- day and night")
+    daytime_text = source("daytime.cpp")
+    daytime = constants(daytime_text)
+    environment_ops = walk_game.disasm(daytime["kEnvironment"], 12)
+    report(environment_ops[0].op_str == f"{walk_game.base + 0x4f50:#x}" and environment_ops[2].op_str == f"{walk_game.base + 0x4f30:#x}", "the environment comes from the hunt")
+    report(walk_game.disasm(0x4f30, 6)[0].op_str == "eax, dword ptr [ecx + 0xb0]", "where expected")
+    report(walk_game.disasm(0xe6e29, 6)[0].op_str == f"al, byte ptr [esi + {daytime['kEnvironmentFrozen']:#x}]", "its clock can be frozen")
+    report(walk_game.disasm(0xe6e3d, 6)[0].op_str == f"dword ptr [esi + {daytime['kEnvironmentClock']:#x}]", "and is in seconds")
+    report(walk_game.disasm(0xe6775, 6)[0].op_str == f"dword ptr [{walk_game.base + 0x1a4408:#x}]" and struct.unpack_from("<f", walk_image, 0x1a4408)[0] == 3600.0, "with 3600 to the hour")
+    report(walk_game.disasm(0xe6e49, 3)[0].op_str == f"ecx, dword ptr [esi + {daytime['kEnvironmentSun']:#x}]", "the environment holds the sun")
+    report(walk_game.disasm(0x153c40, 6)[0].op_str == "dword ptr [ecx + 0x84]" and call_at(0xec960, 0x153c40), "which reads the clock itself")
+    report(walk_game.disasm(0xec050, 3)[0].op_str == f"eax, dword ptr [ecx + {daytime['kSunAmbient']:#x}]" and walk_game.disasm(0xec053, 3)[0].op_str == f"edx, dword ptr [ecx + {daytime['kSunAmbientCount']:#x}]", "its ambient light by the hour is where expected")
+    report(walk_game.disasm(0xec057, 3)[0].op_str == "edx, 4", "with four floats to an hour")
+    report(walk_game.disasm(0xec067, 6)[0].op_str == f"dword ptr [{walk_game.base + 0x1a88c8:#x}]" and abs(struct.unpack_from("<f", walk_image, 0x1a88c8)[0] * 255 - 1) < 1e-3, "scaled down to 0 to 1 as they load")
+    report(struct.unpack_from("<I", walk_image, 0x1e3388 - 12)[0] == 0x20, "and that's the file's ambient_levels")
+    report(walk_game.disasm(0xec4b9, 6)[0].op_str == f"dword ptr [esi + {daytime['kSunSeen']:#x}]", "how much of the sun shows is where expected")
+    report(walk_game.disasm(0xec6d0, 10)[0].op_str == f"dword ptr [esi + {daytime['kSunDazzle']:#x}], 0" and walk_game.disasm(0xec6c6, 10)[0].op_str == f"dword ptr [esi + {daytime['kSunDazzleWanted']:#x}], 0", "and so is its dazzle")
+    tick_slots = [int(value, 16) for value in re.findall(r"0x[0-9a-f]+", re.search(r"kTickSlots\[\] = \{([^}]+)\}", wildlife_text).group(1))]
+    report(all(struct.unpack_from("<I", walk_image, slot)[0] == walk_game.base + 0xc3f40 for slot in tick_slots), f"all {len(tick_slots)} kinds of animal share one tick")
+    report(len(re.findall(re.escape(struct.pack("<I", walk_game.base + 0xc3f40)), bytes(walk_image))) == len(tick_slots), "and that's every one")
+    report(next(i for i in walk_game.disasm(0xc3f40, 0x340) if i.mnemonic == "ret").op_str == "4", "which takes one value")
+    report(walk_game.disasm(0xc3f5a, 4)[0].op_str == "edi, dword ptr [esp + 0x58]" and walk_game.disasm(0xc4034, 4)[0].op_str == "dword ptr [esp + 0x58]", "the time since the last one, divided by")
+
+    print("--- music")
+    report(walk_image[0x93ca2:0x93ca4] == bytes.fromhex("6a00") and walk_game.disasm(0x93b16, 6)[0].op_str == f"dword ptr [{walk_game.base + 0x1a2044:#x}]", "a target within 200 m plays music 0, seen or not")
+    report(struct.unpack_from("<f", walk_image, 0x1a2044)[0] == 40000.0, "which is 200 m squared")
+    report(walk_image[0xb279c:0xb279e] == bytes.fromhex("6a01"), "an animal going after anything plays music 1")
+    report(walk_image[0xb15ba:0xb15bc] == bytes.fromhex("6a02") and walk_game.disasm(0xb1522, 10)[0].op_str == "dword ptr [esi + 0x474], 2", "and one going after the hunter plays music 2")
+    attack_goal = int(re.search(r"kAttackHunterGoal = (\d+)", wildlife_text).group(1))
+    report(walk_game.disasm(0xb5cf5, 6)[0].op_str == f"dword ptr [ebx], {attack_goal:#x}", "that's the goal danger can start")
+    report(walk_game.disasm(0xb5ce7, 6)[0].op_str == f"dword ptr [esi + {wildlife['kBrainAggression']:#x}]" and walk_image[0xb5cf2] == 0x7a, "when a random number comes in under the animal's aggression")
+    report(walk_game.disasm(0xb5ed0, 6)[0].op_str == "dword ptr [esi + 0x150]" and abs(struct.unpack_from("<f", walk_image, 0x19bfe0)[0] - 0.8) < 1e-6, "danger always wins past 0.8")
+    attack_stub = struct.unpack_from("<I", walk_image, 0xb4d20 + attack_goal * 4)[0] - walk_game.base
+    report(walk_game.disasm(attack_stub + 12, 6)[0].op_str == "dword ptr [edx + 0x90]" and all(struct.unpack_from("<I", walk_image, table + 0x90)[0] == walk_game.base + 0xb1500 for table in (0x1a4c70, 0x1a55e8)), "and it's the method that plays the music")
+
+    print("--- water")
+    report(call_at(wildlife["kBulletRayCall"], wildlife["kRayCast"]) and struct.unpack_from("<I", walk_image, 0x1a8480)[0] == walk_game.base + 0xd4920, "a bullet's flight casts a ray in its first method")
+    report(walk_game.disasm(0xd4527, 3)[0].op_str == "eax, dword ptr [edi + 8]" and walk_image[0xd4531:0xd4534] == bytes.fromhex("c21400"), "which gives back how many things it hit")
+    report(walk_game.disasm(0xd4a6c, 2)[0].op_str == "0xa" and walk_game.disasm(0xd4a48, 4)[0].op_str == "dword ptr [esp + 0x38], ebx" and walk_game.disasm(0xd4a94, 4)[0].op_str == "esi, dword ptr [esp + 0x38]", "listed from +4, counted at +8")
+    report(walk_game.disasm(0xd4a98, 3)[0].op_str == "eax, 5" and walk_game.disasm(0xd4ab0, 3)[0].op_str == f"ecx, dword ptr [esi + {wildlife['kHitGeom']:#x}]", "0x20 bytes each, with what was hit at +0x1c")
+    report(walk_game.disasm(0x153bf0, 3)[0].op_str == f"eax, dword ptr [ecx + {wildlife['kGeomKind']:#x}]", "which says what kind of thing it is")
+    water_case = struct.unpack_from("<I", walk_image, 0xd7058 + wildlife_water_geom(wildlife_text) * 4)[0] - walk_game.base
+    report(walk_image[water_case:water_case + 2] == bytes.fromhex("6a10") and "water" in text_at(0x1a84cc), "and that kind of hit only throws up water")
+    report(call_at(wildlife["kWaterTargetCall"], wildlife["kAreaTarget"]) and walk_game.disasm(0xb1c7b, 6)[0].op_str == f"edx, [esi + {wildlife['kAnimalTarget']:#x}]", "a thirsty animal's target is filled in from the area")
+    report(walk_game.disasm(0xbb415, 3)[0].op_str == f"edx, [ebp + {wildlife['kTargetPlace']:#x}]" and walk_game.disasm(0xbb455, 3)[0].op_str == f"dword ptr [ebp + {re.search(r'kTargetNear = (\d+)', wildlife_text).group(1)}], ecx" and walk_image[0xbb45a:0xbb45d] == bytes.fromhex("c20800"), "with its place, and how close counts as there")
+
+    print("--- running and resting")
+    report(all(call_at(call, wildlife["kFleeTarget"]) for call in (0xb201b, 0xb20b9)) and walk_image[0xb1ec4:0xb1ec7] == bytes.fromhex("c20800"), "running away picks its place in one function, twice")
+    report(abs(struct.unpack_from("<f", walk_image, 0x1a397c)[0] - 45.0) < 1e-6 and abs(struct.unpack_from("<f", walk_image, 0x1a4bfc)[0] - 50.0) < 1e-6, "up to 45 degrees off, 50 to 100 m away")
+    report(abs(struct.unpack_from("<f", walk_image, 0x1a4d28)[0] - 250000.0) < 1, "and it stops 500 m from what it's running from")
+    flee_step = float(re.search(r"kFleeStep = ([\d.]+)f", wildlife_text).group(1))
+    report(walk_game.disasm(0xb1ffe, 10)[0].op_str == "dword ptr [esi + 0x4b0], 0x42dc0000" and walk_game.disasm(0xb1ff4, 10)[0].op_str == "dword ptr [esi + 0x478], 0x41a00000", "running away paths to places from 20 to 110 m off")
+    report(walk_game.disasm(0xc1334, 6)[0].op_str == "dword ptr [esi + 0x4b4]" and walk_game.disasm(0xc1350, 10)[0].op_str == "dword ptr [esi + 0x428], 1" and walk_image[0xb2114] == 0, "past that it asks for a new place")
+    report(20.0 < flee_step < 110.0, "so a step along a line stays inside that")
+    report(walk_game.disasm(0xc57e0, 2)[0].op_str == f"{walk_game.base + 0xc5817:#x}" and walk_game.disasm(0xc57f8, 10)[0].op_str == "dword ptr [esi + 0x43c], 0", "an empty mate is skipped, and an unknown one is none")
+    report(walk_game.disasm(0xb5d03, 6)[0].op_str == f"dword ptr [ebx], {wildlife_goal(wildlife_text, 'kFleeGoal'):#x}", "danger runs from the hunter as goal 11")
+    report(walk_game.disasm(0xb5d76, 4)[0].op_str == f"dword ptr [ebp + 4], {wildlife_goal(wildlife_text, 'kGoalDone')}", "a goal at stage 3 has another picked")
+    report(walk_game.disasm(0xb5f97, 7)[0].op_str == f"dword ptr [ebp], {wildlife_goal(wildlife_text, 'kRestGoal')}" and walk_image[0xb12ff:0xb1301] == bytes.fromhex("6a00") and text_at(struct.unpack_from("<I", walk_image, 0x1e1560)[0] - walk_game.base) == "rest", "tiredness is goal 6, which rests")
+    report(walk_game.disasm(0xb5f29, 6)[0].op_str == "al, byte ptr [ecx + 0xbe6]", "being hurt is read as the goal's picked")
+    report(call_at(0xb59e2, 0xb8fc0) and walk_game.disasm(0xb8fc0, 3)[0].op_str == f"dword ptr [ecx + {wildlife['kSensesHearing']:#x}]", "hearing is the senses' third number")
+    report(walk_game.disasm(0xb5a83, 6)[0].op_str == f"dword ptr [esi + {wildlife['kBrainHearing']:#x}]", "and what it heard is kept in the brain")
+
+    print("--- calls")
+    report(walk_game.disasm(wildlife["kPlayCall"] + 3, 6)[0].op_str == "al, byte ptr [esi + 0x381]" and walk_game.disasm(0xae1c1, 7)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalSoundCount']:#x}], 0xc" and walk_game.disasm(0xae1ea, 6)[0].op_str == f"eax, dword ptr [esi + {wildlife['kAnimalSounds']:#x}]", "an animal's call is its 13th sound, played where it is")
+    report(walk_game.disasm(wildlife["kCallHeardWithin"] - 2, 6)[0].op_str == f"dword ptr [{walk_game.base + wildlife['kTwoHundredSquared']:#x}]" and walk_game.disasm(0xae345, 6)[0].op_str == "byte ptr [esi + 0x381], al", "if it's within 200 m")
+    report(abs(struct.unpack_from("<f", walk_image, wildlife["kTwoHundredSquared"])[0] - 40000.0) < 1, "which is 40000 squared")
+    report(walk_game.disasm(0xb04b9, 3)[0].op_str == "ebx, 0xc" and struct.unpack_from("<f", walk_image, wildlife["kCallFadesBy"])[0] == 200.0, "and its sound is heard to 200 m")
+    report(walk_game.disasm(0xb6c1c, 2)[0].op_str == f"{int(re.search(r'kCallAnimation = (\w+)', wildlife_text).group(1), 0):#x}" and call_at(0xb6c24, wildlife["kPlayAnimation"]) and call_at(0xb6c2f, wildlife["kPlayCall"]), "answering a call plays its animation and sound")
+    report(walk_image[0xb36d6:0xb36d9] == bytes.fromhex("c20c00") and walk_game.disasm(0xb6bec, 6)[0].op_str == f"eax, dword ptr [esi + {wildlife['kBrainNeed']:#x}]", "with three values, unless its need is danger")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        names = set(base.namelist())
+    pointed_at = [path for path in re.findall(r'"(/sounds/[^"]+\.ogg)"', wildlife_text) if "an_rd_" not in path]
+    report(all(path.lstrip("/") in names for path in pointed_at), "every sound it points at exists")
+    report(not any(name.startswith("sounds/animals/an_rd_") for name in names), "while red deer point at calls that don't")
+
+    print("--- running")
+    report(call_at(wildlife["kRootMotionCall"], wildlife["kRootMotion"]) and walk_game.disasm(0xc3fec, 6)[0].op_str == "dword ptr [esi + 0x344]" and walk_image[0x173f74:0x173f77] == bytes.fromhex("c20800"), "an animal moves as far as its animation's root, times its size")
+    report(walk_game.disasm(0xc41d0, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalAnimationRate']:#x}]" and walk_game.disasm(0xc531a, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalAnimationRate']:#x}]", "with its animation at a rate set as it's made")
+    report(walk_image[wildlife["kTurnCall"] - 2:wildlife["kTurnCall"]] == bytes.fromhex("ff15") and struct.unpack_from("<I", walk_image, wildlife["kTurnCall"])[0] == walk_game.base + wildlife["kSlerpImport"], "turning goes through one call")
+    report(walk_game.disasm(0xc4091, 6)[0].op_str == f"ebx, [esi + {wildlife['kAnimalRotation']:#x}]" and walk_game.disasm(0xc4128, 8)[0].op_str == "dword ptr [esp + 0x10], 0x3f800000" and walk_game.disasm(0xc41af, 4)[0].op_str == "dword ptr [esp + 0x64]", "easing its facing round by the seconds passed")
+    import_names = {imp.address - walk_game.base: imp.name.decode() for entry in walk_game.pe.DIRECTORY_ENTRY_IMPORT for imp in entry.imports if imp.name}
+    report("slerp_generic" in import_names.get(wildlife["kSlerpImport"], ""), "which is slerp_generic")
+    def attack_ops(at, count=1):
+        return [f"{i.mnemonic} {i.op_str}" for i in walk_game.disasm(at, count * 8)[:count]]
+    charge_at = attack_ops(wildlife["kChargeFromUse"] - 2)[0]
+    report(charge_at == f"fcomp dword ptr [{walk_game.base + wildlife['kGameChargeFrom']:#x}]" and struct.unpack_from("<f", walk_image, wildlife["kGameChargeFrom"])[0] == 75.0, "an attack charges within 75 m")
+    report(attack_ops(0xb2686, 2)[1] == f"fcomp dword ptr [{walk_game.base + 0x1a4bd4:#x}]" and attack_ops(0xb2700) == ["push 3"] and attack_ops(0xb2776) == ["push 4"] and attack_ops(0xb26c1) == [f"fmul dword ptr [{walk_game.base + 0x1a4d2c:#x}]"], "walking slower as it nears, until then, and giving up past 300 m")
+    report(attack_ops(0xb0edf) == [f"lea ecx, [esi + {wildlife['kAnimalAnimations']:#x}]"] and f"lea ebx, [esi + {wildlife['kAnimalBrain']:#x}]" in attack_ops(0xb0ee5, 3), "an animal's brain is part of it")
+    report(attack_ops(0xc1267) == [f"lea ecx, [esi + {wildlife['kAnimalGoalPlace']:#x}]"] and attack_ops(0xc1298, 5)[1:] == ["fmul dword ptr [esp + 0xc]", "faddp st(1)", "fcom dword ptr [esi + 0x47c]", "fnstsw ax"] and attack_ops(0xc12b3) == ["fcomp dword ptr [esi + 0x4ac]"], "running to a place, it's reached counting height, within the near distance")
+    report(attack_ops(0xc11f8) == [f"lea ecx, [esi + {wildlife['kAnimalGoalPlace']:#x}]"] and attack_ops(0xc1229) == ["fcomp dword ptr [esi + 0x4ac]"], "and walking, within 1.1 m")
+    report(attack_ops(0xb200d) == [f"lea ecx, [esi + {wildlife['kAnimalGoalPlace']:#x}]"] and attack_ops(0xb20a0) == [f"lea ecx, [esi + {wildlife['kAnimalGoalPlace']:#x}]"], "which is where running away puts its place")
+    report(attack_ops(0xb2022, 3) == ["push 0", "mov ecx, esi", f"call {walk_game.base + wildlife['kRunTo']:#x}"] and attack_ops(wildlife["kRunTo"] + 0x36, 2)[0] == "mov dword ptr [ecx + 0x428], 3" and attack_ops(0xc10a4) == ["ret 4"], "and then runs to it, by setting its movement going again")
+    report(attack_ops(0xc2c15, 2) == ["fsqrt ", f"fcom dword ptr [{walk_game.base + 0x1a5fb4:#x}]"] and struct.unpack_from("<f", walk_image, 0x1a5fb4)[0] == 90.0 and attack_ops(0xb5a37) == ["push 0x43960000"] and attack_ops(0xb5a5a) == ["push 0x437a0000"], "an animal sees 90 m, smells 300 m and hears 250 m")
+    processors = [text_at(struct.unpack_from("<I", walk_image, 0x1e1560 + 4 * i)[0] - walk_game.base) for i in range(8)]
+    report(processors[wildlife_goal(wildlife_text, "kAttackProcessor")] == "attack" and processors[wildlife_goal(wildlife_text, "kRunAwayProcessor")] == "run_away", "attacking and running away are its galloping states")
+    report(walk_game.disasm(0xb29f7, 3)[0].op_str == "dword ptr [esi + 4], eax", "kept at +4 of what plays its animations")
+    report(walk_game.disasm(0xb1fb1, 10)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalMoveMode']:#x}], {wildlife_goal(wildlife_text, 'kFleeMode')}" and walk_game.disasm(0xb1fc2, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalThreat']:#x}], ecx", "running away keeps what it's running from")
+    report(walk_game.disasm(0xb1f26, 2)[0].op_str == "eax, dword ptr [ecx]" and walk_game.disasm(0xb1f2e, 3)[0].op_str == "dword ptr [eax + 4]", "which says where it is through its second method")
+    report(walk_game.disasm(0xb4a40, 6)[0].op_str == f"dword ptr [edi], {wildlife_goal(wildlife_text, 'kHuntPreyGoal')}", "hunting prey is goal 4")
+
+    print("--- blood and tracks")
+    report(call_at(wildlife["kDripCall"], wildlife["kDropBlood"]) and walk_image[0xc1724:0xc1726] == bytes.fromhex("6a00") and walk_image[0xad1d5:0xad1d8] == bytes.fromhex("c20400"), "a wounded animal drips one stain at a time")
+    report(walk_game.disasm(0xc16b4, 6)[0].op_str == f"al, byte ptr [esi + {wildlife['kAnimalBleeds']:#x}]", "only while it's bleeding")
+    report(walk_game.disasm(0xc16d1, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalBleeding']:#x}]" and walk_game.disasm(wildlife["kDripEveryUse"] - 2, 6)[0].op_str == f"dword ptr [{walk_game.base + wildlife['kTen']:#x}]" and struct.unpack_from("<f", walk_image, wildlife["kTen"])[0] == 10.0, "every 10 over its bleeding, times 2 to 4, seconds")
+    report(call_at(wildlife["kHitBloodCall"], wildlife["kDropBlood"]) and walk_image[0xc6541:0xc6543] == bytes.fromhex("6a02"), "and one where it's hit")
+    report(call_at(wildlife["kStampCall"], wildlife["kStamp"]) and walk_image[0xf36b0:0xf36b3] == bytes.fromhex("c21c00"), "a print goes down through one call")
+    feet = [walk_game.disasm(at, 6)[0].op_str for at in (0xacf15, 0xacf2c, 0xacf63, 0xacf69, 0xad06c, 0xad075, 0xad089)]
+    report(feet == [f"dword ptr [esi + {wildlife['kFeetMoving']:#x}]", f"eax, dword ptr [esi + {wildlife['kFeetGround']:#x}]", f"dword ptr [esi + {wildlife['kFeetTo']:#x}]", f"dword ptr [esi + {wildlife['kFeetFrom']:#x}]", f"edx, dword ptr [esi + {wildlife['kFeetScale']:#x}]", f"eax, [esi + {wildlife['kFeetWay']:#x}]", f"ecx, dword ptr [esi + {wildlife['kFeetTrail']:#x}]"], "reading only these of what leaves it")
+    report(walk_game.disasm(0xacfc9, 6)[0].op_str == f"dword ptr [esi + {wildlife['kAnimalPrintGap']:#x}]" and walk_game.disasm(0xacf37, 3)[0].op_str == f"eax, {wildlife_goal(wildlife_text, 'kSoftGround')}", "with soft ground among those that take prints")
+    report(call_at(0xb05fe, wildlife["kStickers"]) and call_at(0xb0605, wildlife["kStickerNamed"]) and call_at(0xb05f7, wildlife["kCurrentHunt"]), "and a trail found by name")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        stickers = base.read("def/sticker.def").decode("latin-1")
+        basedefs = base.read("def/basedefs.def").decode("latin-1")
+        blood_mats = [base.read(f"material/decal/{name}.mat").decode("latin-1") for name in ("blood1", "blood2", "blood3", "nogore_blood1", "nogore_blood2", "nogore_blood3")]
+        state = base.read("effect/generic/dry/nc_xx_x_decal_mult.rs").decode("latin-1")
+        mult_effect = "effect/generic/dry_tex/dry.tex.fog.nc.decal.mult.rfx" in set(base.namelist())
+    report('limits:"50:200:400"' in stickers and "def hunter_trail" in stickers and 'limits:"300:300:600"' in basedefs, "the trails' limits are as expected, and hunter_trail is there")
+    report(all("dry.tex.fog.nc.decal.over" in mat for mat in blood_mats) and mult_effect and "dst : zero" in state, "blood is drawn over, unlit, and the multiplied state is there to use")
+
+    print("--- stash")
+    stash_text = source("stash.cpp")
+    stash = {m.group(1): int(m.group(2), 0) for m in re.finditer(r"constexpr (?:uintptr_t|size_t) (\w+) = (0x[0-9a-fA-F]+|\d+);", stash_text)}
+    operand = lambda n: f"{n:#x}" if n > 9 else str(n)  # as capstone writes them
+    def first(at):
+        code = walk_game.disasm(at, 16)
+        return f"{code[0].mnemonic} {code[0].op_str}" if code else ""
+    absolute = lambda rva: f"{walk_game.base + rva:#x}"
+    report(first(stash["kCurrentGame"]) == f"mov ecx, dword ptr [{absolute(0x1e9d60)}]" and first(stash["kHuntOf"]) == "mov eax, dword ptr [ecx + 0xa8]", "the hunt is the current game's +0xa8")
+    report(first(0x929dc) == "lea esi, [ecx + 0x140]" and first(0x92a02) == f"lea edi, [esi + {operand(stash['kHuntActionsHead'] - 0x140)}]" and first(0x929f2) == "mov dword ptr [esp + 0x10], 0xff7fffff" and first(0x92a2e) == "ret 0x10", "an action goes on its list with a hidden return, then 4 more")
+    report(first(0x93057) == f"mov ecx, dword ptr [esi + {operand(stash['kActionProvider'])}]" and first(0x9308f) == "call dword ptr [eax + 4]" and first(0x93092) == "fstp dword ptr [esi + 0xc]", "every frame each one's +4 scores it")
+    report(first(0x92946) == f"push {absolute(0x8ef30)}" and first(0x8ee62) == "fld dword ptr [edx + 4]" and first(0x8ee65) == "fcomp dword ptr [ecx + 4]" and first(0x8ee6f) == "mov eax, 0xffffffff", "the lowest score at or above 0 goes first")
+    report(first(0x93140) == "mov eax, dword ptr [ecx + 0x144]" and first(0x9314a) == f"mov edx, dword ptr [ecx + {stash['kHuntActionsHead']:#x}]" and first(0x9316b) == "call dword ptr [eax + 8]", "and the interact key does the first one's +8")
+    report(first(0x13244) == "push 0x8f" and call_at(0x1325d, stash["kHuntOf"]) and call_at(0x13264, 0x93140), "on foot, through the game's own key")
+    report(first(0x101d40) == f"mov eax, dword ptr [{absolute(stash['kProfiles'])}]" and first(0x101d45) == "mov eax, dword ptr [eax + 4]", "the profile is the profiles' +4")
+    report(first(0x40a78) == f"mov ebp, dword ptr [eax + {stash['kProfileTags']:#x}]" and call_at(0x40ab3, stash["kTakeFromTag"]) and first(0x40acd) == f"or dl, {0x40:#x}" and first(0x40ad0) == f"inc word ptr [ecx + {operand(stash['kUnitUses'])}]", "the trophy room takes each trophy out of its tag, and holds it")
+    report(first(0x96df9) == f"cmp ebx, dword ptr [esi + {operand(stash['kListCount'])}]" and first(0x96e24) == f"mov eax, dword ptr [esi + {operand(stash['kListItems'])}]" and first(0x96e3a) == "ret 8" and first(0x97060) == f"mov edx, dword ptr [ecx + {operand(stash['kTagTrophy'])}]", "a tag's trophy is its +4, and taking it out takes where to put it, then which")
+    report(first(0x3ff62) == f"mov ebp, dword ptr [eax + {stash['kProfileTrophies']:#x}]" and first(0x3ff7c) == f"lea ecx, [ebp + {stash['kTrophyList']:#x}]" and call_at(0x3ff7f, stash["kKeepTrophy"]) and first(0xf3ea6) == "ret 4", "moving one to the trophy room keeps it in the profile's")
+    report(call_at(0x3c994, stash["kSaveProfile"]) and call_at(0x922b1, stash["kSaveProfile"]) and first(0xd246c) == "mov eax, dword ptr [edi + 0xb8]", "the profile's saved closing the room, and during a hunt")
+    report(call_at(0x90645, stash["kHudOf"]) and first(0x9064a) == "mov eax, dword ptr [eax + 4]" and first(0x9064d) == "push 0xbf800000" and call_at(0x9065e, stash["kShowMessage"]) and call_at(0x92ffc, stash["kReleaseResource"]), "a message goes up the way the bag's own do")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        txt = base.read("def/ui/txt.def").decode("latin-1")
+        names = set(base.namelist())
+        worlds = {n.split("/")[1]: base.read(n).decode("latin-1") for n in names if re.fullmatch(r"maps/\w+/world\.sii", n)}
+        hunting = [m for m in ("africa", "alaska", "alberta", "arizona", "bavaria", "colorado", "minnesota", "montana", "oregon", "pennsylvania", "texas")]
+        unit_files = {m: re.search(r'world_units_filename: "/([^"]+)"', worlds.get(m, "")) for m in hunting}
+        units = {m: base.read(f.group(1)).decode("latin-1") if f and f.group(1) in names else "" for m, f in unit_files.items()}
+    numbers = [int(n) for n in re.findall(r"def template(\d+)", txt)]
+    report(numbers == list(range(len(numbers))) and "material/ui/ingame/x_claimanimal.mat" in names and "material/ui/ingame/x_ok.mat" in names, f"the HUD's {len(numbers)} labels run in order, so stashing's is {len(numbers)}")
+    models = re.findall(r'"(\w+)"', re.search(r"kCampModels\[\] = \{([^}]*)\}", stash_text).group(1))
+    camps = {}
+    for m, text in units.items():
+        descs = {d for d, model in re.findall(r'\nbody_desc : (\S+) \{\s*model_file: "/models/objects/(\w+)/', text) if model in models}
+        camps[m] = sum(1 for d in re.findall(r"\nbody_inst : \S+ \{\s*body_desc: (\S+)", text) if d in descs)
+    report(all(f for f in unit_files.values()) and all(camps.values()), "every hunting map has a camp: " + ", ".join(f"{m} {c}" for m, c in camps.items()))
+    with zipfile.ZipFile(game / "base.scs") as base:
+        boxes = {m: struct.unpack_from("<6f", base.read(f"models/objects/{m}/object.pmg"), stash["kGeometryBox"]) for m in models}
+    report(all(b[0] <= b[3] and b[1] <= b[4] and b[2] <= b[5] and max(b[3] - b[0], b[5] - b[2]) < 60 for b in boxes.values()), "every camp's model gives its size: " + ", ".join(f"{m} {b[3] - b[0]:.0f}x{b[5] - b[2]:.0f} m" for m, b in boxes.items()))
+
+    print("--- hour names")
+    day = constants(source("daytime.cpp"))
+    for word, table, read in (("hour", day["kHourNames"], day["kHourNamesRead"]), ("clock", day["kClockNames"], day["kClockNamesRead"])):
+        report(walk_game.disasm(read - 3, 7)[0].op_str.endswith(f"[eax*4 + {walk_game.base + table:#x}]"), f"the {word} names are read in one place")
+        last = struct.unpack_from("<I", walk_image, table + 21 * 4)[0] - walk_game.base
+        report(text_at(last) == f"@@g_{word}_21@@@@g_{word}_22@@@@g_{word}_23@@", "and 21 to 23 are one string")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        local = base.read("script/en/local.def").decode("latin-1")
+    report(all(f"g_hour_{hour:02}:" in local and f"g_clock_{hour:02}:" in local for hour in range(24)), "the text for every hour exists")
+
+    print("--- night")
+    report(call_at(wildlife["kSensesCall"], wildlife["kSenses"]) and walk_game.disasm(0xb6861, 2)[0].op_str == "ecx, esi", "an animal senses the hunter in one call")
+    report(walk_game.disasm(0xb59ce, 3)[0].op_str == f"edi, {wildlife['kManagerSenses']:#x}", "from the manager's numbers for what can be sensed")
+    report(call_at(0xb59ed, 0xb8f80) and walk_game.disasm(0xb8f80, 3)[0].op_str == f"dword ptr [ecx + {wildlife['kSensesSmell']:#x}]", "smell is one")
+    report(call_at(0xb59f8, 0xb8fa0) and walk_game.disasm(0xb8fa0, 3)[0].op_str == f"dword ptr [ecx + {wildlife['kSensesSight']:#x}]", "and sight the next")
+    report(call_at(0xb5a11, 0xe6020) and walk_game.disasm(0xe6020, 6)[0].op_str == "dword ptr [ecx + 0x94]", "which the game scales by the light level")
+    report(walk_game.disasm(0xb5a45, 6)[0].op_str == f"dword ptr [esi + {wildlife['kBrainSight']:#x}]", "and keeps in the brain")
+    report(walk_game.disasm(0xb671c, 6)[0].op_str == f"dword ptr [esi + {wildlife['kBrainLure']:#x}]", "a mating lure's pull goes into what the animal wants")
+    report(walk_game.disasm(0xb4b1b, 6)[0].op_str == f"dword ptr [esi + {wildlife['kBrainLure']:#x}]" and walk_game.disasm(0xb4b2a, 6)[0].op_str == f"dword ptr [edi], {wildlife_lure_goal(wildlife_text)}" and walk_game.disasm(0xb4b30, 7)[0].op_str == "dword ptr [edi + 8], 1", "beating a random number starts walking to it")
+    report(walk_game.disasm(0xb0fd6, 7)[0].op_str == "ecx, [esi + eax*4 + 0x44c]" and wildlife["kAnimalLurePlace"] == 0x44c + 12, "the mating lure's place is the second of two")
+    report(struct.unpack_from("<I", walk_image, 0xb4d20 + 3 * 4)[0] == walk_game.base + 0xb4c03 and walk_game.disasm(0xb4c0f, 3)[0].op_str == "dword ptr [edx + 0x78]", "that goal is an animal's method")
+    report(all(struct.unpack_from("<I", walk_image, table + 0x78)[0] == walk_game.base + 0xb0f20 for table in (0x1a4c70, 0x1a55e8)), "and both kinds of animal share it")
+    report(walk_game.disasm(0xb6742, 6)[0].op_str == f"eax, dword ptr [esi + {wildlife['kBrainGoal']:#x}]" and walk_game.disasm(0xb6792, 6)[0].op_str == f"edx, dword ptr [esi + {wildlife['kBrainGoalStage']:#x}]", "the goal and its stage are in the brain")
+
+    print("--- lights")
+    lights_text = source("lights.cpp")
+    lights = constants(lights_text)
+    daytime_curfew = constants(source("daytime.cpp"))["kCurfewCheck"]
+    curfew = walk_game.disasm(daytime_curfew, 6)[0]
+    report(curfew.mnemonic == "jne" and curfew.op_str == f"{walk_game.base + 0x93d11:#x}", "the game checks the hour before calling a hunt off")
+    curfew_bytes = {
+        name: bytes(int(value, 16) for value in re.findall(r"0x[0-9A-Fa-f]{2}", re.search(name + r"\[\] = \{(.*?)\}", source("daytime.cpp")).group(1)))
+        for name in ("kCurfewOn", "kCurfewOff")
+    }
+    report(walk_image[daytime_curfew:daytime_curfew + len(curfew_bytes["kCurfewOn"])] == curfew_bytes["kCurfewOn"], "with these exact bytes")
+    report(curfew_bytes["kCurfewOff"][1:] == curfew_bytes["kCurfewOn"][1:] and curfew_bytes["kCurfewOff"][0] == 0xeb, "and the same jump always taken instead")
+    report(walk_game.disasm(0x93cd8, 6)[0].op_str == f"dword ptr [{walk_game.base + 0x1a01c8:#x}]" and struct.unpack_from("<f", walk_image, 0x1a01c8)[0] == 21.0, "against 21:00")
+    report(text_at(0x1a2014) == "@@g_lc_huntoverquestion@@" and walk_game.disasm(0x93cef, 5)[0].op_str == f"{walk_game.base + 0x1a2014:#x}", "and that's the question it asks")
+    code_part = next(part for part in walk_game.pe.sections if part.Characteristics & 0x20000000)
+    code_start = code_part.VirtualAddress
+    code_end = code_start + code_part.Misc_VirtualSize - 5
+    def calls_to(target):
+        return {at for at in range(code_start, code_end) if walk_image[at] == 0xe8 and at + 5 + struct.unpack_from("<i", walk_image, at + 1)[0] == target}
+    def listed(name):
+        return {int(call, 16) for call in re.findall(r"0x[0-9a-f]+", re.search(name + r"\[\] = \{(.*?)\}", lights_text).group(1))}
+    report(calls_to(lights["kChooseItem"]) == listed("kChooseItemCalls") | {0xde1c}, "every way of choosing an item is caught")
+    report(calls_to(lights["kUseItem"]) == listed("kUseItemCalls") | {0xddf3}, "and of using the selected one")
+    report(walk_image[0xd92d:0xd930] == bytes.fromhex("c20400"), "choosing takes one value")
+    report(walk_image[0xd870] == 0xc3, "and using takes none")
+    report(call_at(0xd927, lights["kSelectItem"]) and walk_image[0xa126f:0xa1271] == bytes.fromhex("b001"), "choosing selects the item by name")
+    report(walk_game.disasm(0xa2507, 3)[0].op_str == f"eax, [ecx + {lights['kItemName']:#x}]" and walk_game.disasm(0xa27fb, 3)[0].op_str == "ebp, [esi + 0x2c]", "and an item's name is its def's")
+    report(walk_game.disasm(0xd8e3, 3)[0].op_str == f"eax, dword ptr [esi + {lights['kHunterWaiting']:#x}]" and walk_game.disasm(0xd8ea, 6)[0].op_str == f"al, byte ptr [esi + {lights['kHunterHasHands']:#x}]", "after checking the hunter isn't busy")
+    report(walk_game.disasm(0xcfe3, 6)[0].op_str == f"ecx, dword ptr [esi + {lights['kHunterItems']:#x}]" and walk_game.disasm(0xcfe9, 3)[0].op_str == f"eax, dword ptr [ecx + {lights['kItemsSelected']:#x}]", "and what's selected")
+    report(walk_game.disasm(0xcff0, 3)[0].op_str == f"al, byte ptr [eax + {lights['kItemFlags']}]" and walk_image[0xcff3:0xcff6] == bytes.fromhex("c0e807"), "still exists")
+    report(walk_game.disasm(0xa24b0, 3)[0].op_str == f"eax, dword ptr [ecx + {lights['kItemState']:#x}]" and walk_game.disasm(0xd014, 3)[0].op_str == "eax, " + re.search(r"kItemDown = (\d+)", lights_text).group(1), "and is down")
+    report(walk_game.disasm(0xd90b, 7)[0].op_str == "dword ptr [esi + 0x58], 2", "and left alone, it waits for that to go away")
+    click = walk_game.disasm(0x16516, 7)[0]
+    report(click.op_str == f"dword ptr [esp], {walk_game.base + 0x19c818:#x}" and text_at(0x19c818) == "/sounds/ui/click.ogg" and call_at(0x16529, lights["kPlaySound"]), "the menu plays a sound by its path")
+    report(walk_image[0x1648d:0x16490] == bytes.fromhex("c20400"), "which is one value")
+    report(walk_game.disasm(lights["kPlaySound"], 6)[0].op_str == f"al, byte ptr [ecx + {lights['kMenuQuiet']:#x}]", "and it only wants a menu to see if it's quiet")
+    report(walk_game.disasm(0xe6050, 6)[0].op_str == f"eax, [ecx + {lights['kEnvironmentAmbient']:#x}]" and walk_game.disasm(0xe6060, 6)[0].op_str == f"eax, [ecx + {lights['kEnvironmentDiffuse']:#x}]", "the light right now is in the environment")
+    view_text = source("view.cpp")
+    world_call = constants(view_text)["kWorldDrawCall"]
+    report(world_call == 0x102f99 and call_at(0x102f99, 0x1560a0) and call_at(0x102fea, 0x1560a0), "the world is drawn before the weapon, in a call of its own")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        names = set(base.namelist())
+        stock_equipment = base.read("def/equipment.def").decode("latin-1")
+        stock_map = re.search(r"def map:eqitem_base \{(.*?)\}", stock_equipment, re.S).group(1)
+        items_text = re.search(r"kLightItems\[\] =(.*?);\s*\n", lights_text, re.S).group(1)
+        for key in ("script", "pba", "category"):
+            value = re.search(rf'{key}:"([^"]+)"', stock_map).group(1)
+            report(items_text.count(f'{key}:\\"{value}\\"') == 2, f"both lights match the map's {key}")
+        for icon in set(re.findall(r'(?:icon|glow):\\"/([^\\]+)\\"', items_text)):
+            report("i_predatorcall" in icon and icon in names, f"{icon} exists")
+        report(not re.search(r"^def (flashlight|lantern):", stock_equipment, re.M), "and neither name is taken")
+        report(re.search(r'kSwitchSound\[\] = "/([^"]+)"', lights_text).group(1) in names, "the switch's sound exists")
+
+    print("--- freelook")
+    freelook_text = source("freelook.cpp")
+    freelook = constants(freelook_text)
+    foot_word = struct.unpack_from("<I", walk_image, freelook["kFootViewClass"] + 0x14)[0]
+    report(foot_word == walk_game.base + 0x1e9db0, "the view on foot has the class expected")
+    frustum_update = walk_game.disasm(freelook["kUpdateFrustum"], 0x12)
+    report(frustum_update[0].op_str == f"eax, [ecx + {freelook['kPlaceRotation']:#x}]" and frustum_update[1].op_str == "edx, [ecx + 0x20]", "a view's frustum comes from its position and rotation")
+    report(walk_game.imports[("p3core.dll", "?update@frustum_t@prism@@QAEXABV?$vec_t@M$02@2@ABVquat_t@2@@Z")] == walk_game.base + 0x19a4ec, "through the engine's frustum update")
+    report(walk_game.disasm(0x12ba2, 6)[0].op_str == f"dword ptr [esi], {walk_game.base + 0x19c240:#x}", "the view on foot has the table of methods expected")
+    report(freelook["kFollowBodySlot"] == 0x19c240 + 0x30 and struct.unpack_from("<I", walk_image, freelook["kFollowBodySlot"])[0] == walk_game.base + 0x12c00, "and catches up with the body in the method expected")
+    report(walk_game.disasm(0x12c52, 3)[0].op_str == "dword ptr [edx + 0x40]" and walk_game.disasm(0x12c57, 3)[0].op_str == f"edi, [esi + {freelook['kPlaceRotation']:#x}]", "which is where it takes the body's rotation")
+    report(call_at(0x12d14, freelook["kUpdateFrustum"]) and walk_game.disasm(0x12d1f, 1)[0].mnemonic == "ret", "and ends by updating the frustum, taking no values")
+    camera_calls = walk_game.disasm(0x5db5, 12)
+    report(camera_calls[0].op_str == "dword ptr [eax + 0x50]" and camera_calls[-1].op_str == "dword ptr [edx + 0x30]", "the world draw has the camera catch up as it starts")
+    report(struct.unpack_from("<I", walk_image, 0x19b098 + 0x50)[0] == walk_game.base + 0x30d0, "with the hunt's camera")
+    report(call_at(0x5e1c, 0x5580), "before it sets up the camera for drawing")
+    shot_view = walk_game.disasm(0xa74b8, 13)
+    report(shot_view[0].op_str == "dword ptr [edx + 0x58]" and shot_view[3].op_str == "dword ptr [edx + 0x50]" and shot_view[4].op_str == "eax, 0x20", "a shot takes its place from the player's view")
+    report(walk_game.disasm(0xabaf3, 3)[0].op_str == "dword ptr [edx + 0x50]" and walk_game.disasm(0xabaf6, 3)[0].op_str == f"ecx, dword ptr [eax + {freelook['kPlaceRotation']:#x}]", "and the gun takes its rotation from the camera")
+    report(walk_game.disasm(0x131a2, 3)[0].op_str == "dword ptr [eax + 0x40]" and walk_game.disasm(0x13224, 3)[0].op_str == "dword ptr [ebx + 0x48]", "while turning starts from the hunter's own rotation, so the head never reaches the body")
+    for name in re.findall(r'constexpr char kAttitude\w+\[\] = "([^"]+)";', freelook_text):
+        report(name in bins["p3core.dll"].exports, f"p3core exports {name[:24]}")
+
+    print("--- tree stand")
+    stand_text = source("stand.cpp")
+    stand = constants(stand_text)
+    report(call_at(stand["kSetSmellCall"], stand["kSetSmell"]), "the hunter's smell is set where expected")
+    report(call_at(stand["kSetSightCall"], stand["kSetSight"]), "and so is their sight")
+    ladder_word = struct.unpack_from("<I", walk_image, stand["kLadderViewClass"] + 0x14)[0]
+    report(ladder_word == walk_game.base + 0x1e9db4, "the view on a ladder has the class expected")
+    report(any(f"[esi + {stand['kLadderViewOffset']:#x}]" in i.op_str for i in walk_game.disasm(0x139cd, 6)), "and holds its view offset where expected")
+    report(text_at(struct.unpack_from("<I", walk_image, 0x1e28e4)[0] - walk_game.base) == "view_offset" and struct.unpack_from("<I", walk_image, 0x1e28d8)[0] == 0x40, "a ladder top's view offset is where expected")
+    report(struct.unpack_from("<f", walk_image, 0x1a96b8)[0] == 0.0, "and it's 0 unless a script says otherwise")
+    with zipfile.ZipFile(game / "base.scs") as base:
+        offsets = {}
+        for name in base.namelist():
+            if name.endswith(".sii"):
+                data = base.read(name).decode("latin-1")
+                if "ladder_top" in data:
+                    found = re.search(r"view_offset\s*:\s*([\d.]+)", data)
+                    offsets[name] = float(found.group(1)) if found else 0.0
+        report(offsets.pop("script/item/treestand.sii", None) == 0.0, "the tree stand gives no view offset")
+        report(len(offsets) >= 4 and all(value > 0.0 for value in offsets.values()), f"and all {len(offsets)} other stands and ladders do")
+        leaf_line = re.search(r'kLeafAlpha\[\] = "([^"]+)"', stand_text).group(1)
+        leaf_source = re.search(r'kLeafSource\[\] = "([^"]+)"', stand_text).group(1)
+        leaf_program = base.read("effect/hu4/dif_opac/arb2.fp").decode("latin-1")
+        report(leaf_program.count(leaf_line) == 1, "the leaf program has the line that's changed")
+        report(leaf_source in leaf_program, "and says what it's built from")
+
+    print("--- calculator and range sheet")
+    paper_text = source("paper.cpp")
+    paper = constants(paper_text)
+    map_table = walk_game.base + 0x1a2690
+    report(walk_game.disasm(0x97829, 6)[0].op_str == f"dword ptr [esi], {map_table:#x}", "the map item has the table of methods expected")
+    report(paper["kMapInitSlot"] == 0x1a2690 + 0x30 and struct.unpack_from("<I", walk_image, paper["kMapInitSlot"])[0] == walk_game.base + 0x97530, "which is where it reads its definition")
+    report(walk_image[0x976bf:0x976c2] == bytes.fromhex("c20400"), "and that takes one value")
+    report(walk_game.disasm(0x975ab, 5)[0].op_str == f"{walk_game.base + 0x1a267c:#x}" and text_at(0x1a267c) == "use_sound", "the definition, as it reads use_sound from it")
+    report(paper["kMapStageSlot"] == 0x1a2690 + 0x58 and struct.unpack_from("<I", walk_image, paper["kMapStageSlot"])[0] == walk_game.base + 0x972c0, "and where it's told about raising and lowering")
+    report(walk_image[0x97321:0x97324] == bytes.fromhex("c20800"), "and that takes two values")
+    report(walk_game.disasm(0x972c4, 3)[0].op_str == "eax, 1", "stage 1 is what shows and hides the window")
+    report(walk_game.imports[("p3shared.dll", "?ui_wshow@prism@@YAXPAVc_item_t@1@I@Z")] == walk_game.base + 0x19ab00, "with the engine's window show")
+    report(walk_game.imports[("p3shared.dll", "?ui_whide@prism@@YAXPAVc_item_t@1@@Z")] == walk_game.base + 0x19aaa0, "and hide")
+    report(struct.unpack_from("<I", walk_image, 0x1a2690 + paper["kMethodLower"])[0] == walk_game.base + 0xa2b80, "lowering an item is the method expected")
+    report(walk_game.disasm(0xa2ba0, 3)[0].op_str == "eax, 1", "which only acts on one that's raised")
+    report(walk_game.disasm(0xa29c1, 3)[0].op_str == f"dword ptr [eax + {paper['kMethodLower']:#x}]", "and takes no values")
+    report(walk_game.disasm(0x9764c, 6)[0].op_str == f"ecx, dword ptr [{walk_game.base + paper['kGameState']:#x}]", "the game's state is where expected")
+    report(call_at(0x24438, paper["kProfileSection"]), "a profile's sections are found where expected")
+    report(text_at(0x19cc98) == "free_hunt" and text_at(0x19cee0) == "weapon", "with the free hunt loadout under the names expected")
+    for slot, name in ((paper["kGetValue"], "?get_value@def_obj_t@prism@@QBEPBDQBDI@Z"), (paper["kGetBool"], "?get_bool@def_obj_t@prism@@QBE_NQBDI@Z"),
+                       (paper["kGetInt"], "?get_int@def_obj_t@prism@@QBEHQBDI@Z"), (paper["kFindInPool"], "?find@def_pool_t@prism@@QBEPAVdef_obj_t@2@PBDI_N@Z")):
+        report(walk_game.imports[("p3shared.dll", name)] == walk_game.base + slot, f"{name[1:name.index('@@')]} is in the slot expected")
+    translate = [name for dll, name in walk_game.imports if "lcl_translate_string" in name]
+    report(len(translate) == 1 and walk_game.imports[next(key for key in walk_game.imports if key[1] == translate[0])] == walk_game.base + paper["kTranslate"], "text is translated through the slot expected")
+    report(walk_game.disasm(0xa8c37, 3)[0].op_str == "eax, 5" and walk_game.disasm(0xa8c55, 5)[0].op_str == "eax, 0x12c", "a gun's zero range is kept between 5 and 300")
+    report(walk_game.disasm(0x180a, 2)[0].op_str == "1", "files are opened from the realm expected")
+
+    solver_start = walk_game.disasm(paper["kSolverStart"], 0x39)
+    solver_text = "\n".join(i.op_str for i in solver_start)
+    report("dword ptr [eax + 4], 0x3f000000" in solver_text, "the solver starts with a ballistic coefficient of 0.5")
+    report("dword ptr [eax + 8], 0x453b8000" in solver_text, "and a muzzle speed of 3000")
+    report("dword ptr [eax + 0xc], 0x43160000" in solver_text, "and a bullet of 150 grains")
+    report("dword ptr [eax + 0x18], 0x3fc00000" in solver_text, "and sights 1.5 above the bore")
+    report(solver_start[-1].mnemonic == "ret", "and takes no values to start")
+    report(call_at(0xa6857, paper["kSolve"]), "the game solves its sights where expected")
+    report(walk_game.disasm(paper["kSolverEnd"], 3)[0].op_str == "ecx, 0x20", "and clears up after")
+    report(paper["kSolverElevation"] == 0x10 and paper["kSolverSize"] == 0x30, "the answer is where expected")
+
+    with zipfile.ZipFile(game / "base.scs") as base:
+        equipment = base.read("def/equipment.def").decode("latin-1")
+        names = set(base.namelist())
+        game_defs = base.read("def/game.def").decode("latin-1")
+        stock_map = re.search(r"def map:eqitem_base \{(.*?)\}", equipment, re.S).group(1)
+        new_items = re.search(r"kNewItems\[\] =(.*?);\s*\n", paper_text, re.S).group(1)
+        for key in ("script", "pba", "camo_look", "area_variant", "use_sound", "category"):
+            value = re.search(rf'{key}:"([^"]+)"', stock_map).group(1)
+            report(new_items.count(f'{key}:\\"{value}\\"') == 2, f"both items match the map's {key}")
+        for icon in re.findall(r'(?:icon|glow):\\"/([^\\]+)\\"', new_items):
+            report(icon in names, f"{icon} exists")
+        report('class00:"eqitem_base"' in game_defs, "items of that kind are listed in the loadout")
+        report(re.search(r"def eqitems \{.*?def misc \{", game_defs, re.S) is not None, "with a misc category")
+        report(not re.search(r"^def (calculator|range_sheet):", equipment, re.M), "and neither name is taken")
+
+        # The equipment grid: 68 unit cells with a gap of 6, in 4 columns, and rows that start from the top.
+        layout_text = source("layout.cpp")
+        grid_layout = base.read(re.search(r'kGearGrid\[\] = "([^"]+)"', layout_text).group(1)).decode("latin-1")
+        grid_coords = {key: re.search(rf'{key}\[\] = "\\"coords\\" : \\"([\d ]+)\\""', layout_text).group(1) for key in ("kGearListWas", "kGearList", "kGearHeadingWas", "kGearHeading")}
+        report(grid_layout.count(f'"coords" : "{grid_coords["kGearListWas"]}"') == 1, "the equipment list is where expected")
+        report(grid_layout.count(f'"coords" : "{grid_coords["kGearHeadingWas"]}"') == 1, "and so is its heading")
+        list_values = re.search(r'"item_gap" : "([\d.]+)".*?"item_width" : "([\d.]+)".*?"item_height" : "([\d.]+)"', grid_layout, re.S)
+        cell_gap, cell_width, cell_height = (float(value) for value in list_values.groups())
+        report((cell_gap, cell_width, cell_height) == (6.0, 68.0, 68.0), "its cells are 68 units with gaps of 6")
+        frame = (16, 69, 337, 673)
+        report(grid_layout.count('"coords" : "16 69 337 673"') == 1, "and its frame is where expected")
+        left, bottom, right, top = (int(value) for value in grid_coords["kGearList"].split())
+        old_left, old_bottom, old_right, old_top = (int(value) for value in grid_coords["kGearListWas"].split())
+        report((left, right) == (old_left, old_right), "the list stays 4 columns wide")
+        report(frame[1] <= bottom and top <= frame[3], "and stays inside its frame")
+        rows = (top - bottom + cell_gap) // (cell_height + cell_gap)
+        report(rows == 8 and (top - bottom) // (cell_height + cell_gap) == 8, "with room for exactly 8 rows")
+        report((old_top - old_bottom) // (cell_height + cell_gap) == 7, "where it had 7")
+        stock_parents = dict(re.findall(r"(?m)^\s*def (\w+):(\w+)", base.read("def/basedefs.def").decode("latin-1")))
+        stock_parents.update(re.findall(r"(?m)^def (\w+):(\w+)", equipment))
+
+        def is_gear(name):
+            while name:
+                if name == "eqitem_base":
+                    return True
+                name = stock_parents.get(name)
+            return False
+
+        gear_count = sum(is_gear(name) for name in re.findall(r"(?m)^def (\w+):", equipment))
+        report(gear_count == 28, f"the game has {gear_count} gear items, which is what filled it")
+        report(gear_count + 4 <= 4 * rows, "and all of them fit with the four added")
+        heading = [int(value) for value in grid_coords["kGearHeading"].split()]
+        report(heading[1] >= frame[3] and heading[3] <= 768, "the heading sits between the frame and the top of the screen")
+        ammo_files = sorted(set(re.findall(r'^\s*ammo:"([^"]+\.sii)"', equipment, re.M)))
+        bad_ammo = []
+        for path in ammo_files:
+            text = base.read(path.lstrip("/")).decode("latin-1")
+            for key in ("bc", "muzzle", "weight"):
+                if len(re.findall(rf"^\s*{key}\s*:\s*[\d.]+", text, re.M)) != 1:
+                    bad_ammo.append((path, key))
+        report(len(ammo_files) > 10 and not bad_ammo, f"all {len(ammo_files)} kinds of ammo give each number once")
 
     print(f"\n{failures} failure(s)")
     return 1 if failures else 0

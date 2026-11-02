@@ -29,12 +29,32 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | The ATV cuts out at 25 km/h, stalls on hills, and bounces constantly | It pulls away properly, climbs without a run-up, reaches 55 km/h, and rides on its suspension |
 | The ATV's brake does less than letting go, and it can't hold it on a hill | It stops from 55 km/h in about 9 m, and holds it on hills |
 | The ATV washes wide in turns, and wanders on hills and over bumps | Steering suits your speed, and it holds its line |
+| The view from behind the ATV falls metres back as you speed up | It stays with you, and still rides the bumps smoothly |
+| The ATV gets thrown by bumps and flips onto its back or nose, killing you | It's heavy in the air and lands on its wheels, and it can't go over backwards or onto its nose |
 | Walking is slow, and half that backwards or sideways | A bit faster forward, and most of that speed in every direction |
 | Footsteps have two volumes, and animals don't hear how fast you go | Both follow your real speed, so creeping is quieter and running is louder |
 | Footsteps go silent on some ground | Every step makes a sound |
 | Ironsight shots land away from the sights | Sway moves the whole view, as in a scope, so shots go where the sights are |
+| Looking around means turning the way you're heading | Hold left alt to turn your head without changing where you walk, and shots go where you look |
+| Sights are set in MOA, with nothing to say what a range needs | A Range Sheet for your loadout gives the MOA for each gun every 25 yd out to 1000 yd, and a Calculator handles what's in between |
+| Animals see and smell you up in a tree stand, and leaves block your view | Only noise gives you away up there, and the leaves near you thin out |
 | A free hunt runs out of animals, and opens by showing you where one is | New herds arrive to hold the population you chose, and you start straight at your marker |
 | Free hunt animals start close by, and can bolt for no reason | They start at least 450 m away, and only run from what they've noticed |
+| Free hunt animals are few, far between and alone | About three times as many groups, herds of up to 15, and mothers with their young |
+| The sun never moves in a hunt, and hunts end at 9 PM | A full day and night cycle in free hunts, 48 minutes by default, with moonlit nights and no cutoff |
+| Nothing to see by at night | A flashlight and a lantern for your loadout, which stay on whatever else you're holding |
+| Animals see as well at midnight as at noon | At night they go by sound, and a light draws them in until they get close enough to see you |
+| Spooked animals zigzag, circle, and sometimes run straight at you | A herd picks one line away from you and keeps to it, uphill if it can and never into water. A cornered animal that can fight comes for you |
+| Mountain goats wander anywhere, even the flats | They live on mountainsides and high ground, come down now and then to drink, and flee uphill |
+| Animals never sleep | At night grazers bed down somewhere dry and high, fall asleep, and wake to noise, shots and bullets. One in each herd keeps watch |
+| Animals never make a sound unless you use a call | They call in alarm, when hit, to keep in touch, and more at dawn and dusk. Bears growl as they come for you, and wolves howl together at night |
+| Animals run at 3 to 6 m/s and turn like boats | Each kind runs as fast as it really does and turns quickly, cats most of all. They tire, agile ones jink, and bears, bison and moose sometimes bluff |
+| Blood is a few faint drops that glow at night, and tracks can barely be seen | Blood pours from bad hits and pools where an animal lies up, darkens with the ground, and draws predators. Tracks are bigger and darker, show when an animal ran, and you leave your own |
+| A wounded animal just stands there | It runs, then lies up, and runs on if you come after it. Mother bears and cougars defend their young, and anything that runs into you knocks you back |
+| Animals have no routine | They go to water and keep to the clock, grazers settling at night as hunters get busy. Hunters leave others alone while they drink, and herds panic together |
+| Bullets leave no mark on trees | A puff, as on the ground |
+| Hardly any birds | Up to 24 at once, and they scatter at gunshots. Vultures gather near a carcass, which draws hunters from further away |
+| Once your tags are used up, you have to end a free hunt to bag anything more | Stash what you've bagged at a camp, any building or parked truck, with the interact key. It goes straight to your trophy room and is saved, and your tags are free again. A full bag tells you so |
 | The free hunt map marker snaps to points about 200 m apart | It goes almost anywhere, and a hunt never starts you in water |
 | Your eyelids close whenever the sun is anywhere in a wide view | Only when you're looking close to the sun |
 | Menus and HUD are stretched on wide screens | Correct proportions, with menus centred and their backgrounds filling the sides |

@@ -100,6 +100,8 @@ float g_ui_rect[4] = {};
 bool g_ui_rect_valid = false;
 const void* g_world_frustum = nullptr;
 float g_game_fov = 0.0f;
+float g_world_projection[16] = {};
+bool g_world_projection_known = false;
 bool g_world_drawn = false;
 bool g_world_finished = false;
 void* g_hud_window = nullptr;
@@ -185,14 +187,23 @@ void __cdecl hook_projection(void* matrix, const float* rect, float near_plane, 
         }
     }
     g_real_projection(matrix, rect, near_plane, far_plane, view_adjust_fov(fov, effective), aspect);
+    // The reflection cube comes through here too, but only as big as its texture. The weapon's comes
+    // later, after the world has been drawn with this one.
+    if (world_camera) {
+        memcpy(g_world_projection, matrix, sizeof(g_world_projection));
+        g_world_projection_known = true;
+    }
 }
 
 // Camera setup doesn't run on every frame, so this is the only sure sign the world was drawn.
 void __cdecl hook_draw_world(void* context) {
     {
         ProfileTimer timer(ProfileSection::Queues);
+        stand_before_world();
         reinterpret_cast<DrawQueuesFn>(g_game + kDrawQueues)(context);
+        stand_after_world();
     }
+    if (g_world_projection_known) post_capture_world(g_world_projection);
     g_world_finished = true;
 }
 

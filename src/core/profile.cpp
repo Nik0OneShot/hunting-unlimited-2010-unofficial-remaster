@@ -83,6 +83,8 @@ void __fastcall hook_game_frame(void* game) {
 void __fastcall hook_render(void* game) {
     g_render_started = now_seconds();
     add(ProfileSection::Sim, g_render_started - g_frame_started);
+    freelook_before_render();
+    daytime_before_render();
     reinterpret_cast<FrameFn>(g_game + kRender)(game);
 }
 

@@ -103,6 +103,11 @@ void config_load() {
     g_cfg.weapon_queue = read_bool(L"game", L"weapon_queue", g_cfg.weapon_queue);
     g_cfg.action_speed = read_float(L"game", L"action_speed", g_cfg.action_speed);
     g_cfg.strong_atv = read_bool(L"game", L"strong_atv", g_cfg.strong_atv);
+    g_cfg.freelook_key = read_int(L"game", L"freelook_key", g_cfg.freelook_key);
+    g_cfg.freelook_yaw = read_float(L"game", L"freelook_yaw", g_cfg.freelook_yaw);
+    g_cfg.freelook_pitch = read_float(L"game", L"freelook_pitch", g_cfg.freelook_pitch);
+    g_cfg.stand_hidden = read_bool(L"game", L"stand_hidden", g_cfg.stand_hidden);
+    g_cfg.stand_clear_view = read_bool(L"game", L"stand_clear_view", g_cfg.stand_clear_view);
     g_cfg.faster_walking = read_bool(L"game", L"faster_walking", g_cfg.faster_walking);
     g_cfg.walk_speed = read_float(L"game", L"walk_speed", g_cfg.walk_speed);
     g_cfg.side_speed = read_float(L"game", L"side_speed", g_cfg.side_speed);
@@ -111,6 +116,9 @@ void config_load() {
     g_cfg.free_hunt_opening = read_bool(L"game", L"free_hunt_opening", g_cfg.free_hunt_opening);
     g_cfg.free_hunt_animals = read_bool(L"game", L"free_hunt_animals", g_cfg.free_hunt_animals);
     g_cfg.free_hunt_calm_animals = read_bool(L"game", L"free_hunt_calm_animals", g_cfg.free_hunt_calm_animals);
+    g_cfg.free_hunt_wildlife = read_bool(L"game", L"free_hunt_wildlife", g_cfg.free_hunt_wildlife);
+    g_cfg.free_hunt_day_minutes = read_float(L"game", L"free_hunt_day_minutes", g_cfg.free_hunt_day_minutes);
+    g_cfg.free_hunt_night_light = read_float(L"game", L"free_hunt_night_light", g_cfg.free_hunt_night_light);
     g_cfg.free_hunt_any_marker = read_bool(L"game", L"free_hunt_any_marker", g_cfg.free_hunt_any_marker);
     g_cfg.pause_in_background =
         read_bool(L"game", L"pause_in_background", g_cfg.pause_in_background);

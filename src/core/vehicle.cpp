@@ -152,11 +152,63 @@ constexpr int kMostReports = 60;
 constexpr DWORD kTouchGapMs = 250;
 constexpr int kMostTouches = 100;
 
+// The ATV's actor holds ODE's body at +0xb8, with methods to read and set its spin. The body has its
+// rotation as three rows of four, and its joints as a list, each naming the body at the other end,
+// which for a wheel is the chassis.
+constexpr size_t kActorBody = 0xb8;
+constexpr size_t kMethodSpin = 0x64;
+constexpr size_t kMethodSetSpin = 0x84;
+constexpr size_t kBodyJoints = 0x14;
+constexpr size_t kBodyFlags = 0x18;
+constexpr size_t kBodyRotation = 0xa8;
+constexpr size_t kJointOtherBody = 4;
+constexpr uint32_t kBodyDisabled = 4;
+
+// Weight. Off the ground the ATV falls at twice the pace, so a bump throws it half as high, and its
+// pitch and roll come round to land it on its wheels: nose along the way it's flying, within 20
+// degrees, and level side to side. On the ground with one axle up, that end can't keep rising, which
+// is how it went over backwards or onto its nose, and past 45 degrees it's brought back.
+constexpr float kExtraFall = 9.81f;          // m/s2, on top of the world's own
+constexpr float kSettleSeconds = 0.1f;       // spin comes round to what's wanted about this quickly
+constexpr float kLevelSeconds = 0.3f;        // and what's wanted turns it level about this quickly
+constexpr float kMostLevelling = 3.0f;       // rad/s
+constexpr float kFlightShare = 0.6f;
+constexpr float kMostFlightPitch = 0.35f;    // 20 degrees
+constexpr float kLeastFlightSpeed = 3.0f;
+constexpr float kSteepest = 0.785f;          // 45 degrees
+constexpr float kLongJumpSeconds = 0.25f;
+const float kSettleShare = 1.0f - expf(-kPhysicsTick / kSettleSeconds);
+
+// The view from behind a vehicle orbits a point that eases toward it by 4 times the frame's seconds
+// (+0x15426), which leaves it a quarter of a second behind: nearly 4 m at 55 km/h. So before each
+// update that point is moved most of the way the vehicle went across the ground. Rising and falling
+// are left to the game, which is what smooths the bumps.
+constexpr uintptr_t kVehicleViewUpdateSlot = 0x19c624;
+constexpr uintptr_t kVehicleViewTarget = 0x15150;
+constexpr size_t kViewFollowing = 0x164;
+constexpr float kKeepUp = 0.9f;           // what's left is 40 cm behind at the top speed
+constexpr DWORD kViewGapMs = 500;         // longer than this since the last update starts afresh
+
+// Which wheels touched since the ATV's last tick, front and back. One that hasn't been touched for a
+// second is an ATV that's gone, so its place is freed.
+struct Footing {
+    char* chassis;
+    int front;
+    int back;
+    int seen;
+};
+constexpr int kMostFootings = 4;
+constexpr int kGoneTicks = 40;
+
 using TickFn = void(__thiscall*)(void*, void*);
 using ControlsFn = void(__thiscall*)(void*, float);
 using VelocityFn = const float*(__thiscall*)(void*);
 using SetVelocityFn = void(__thiscall*)(void*, const float*);
 using LocalVelocityFn = void*(__thiscall*)(void*, float*);
+using SpinFn = const float*(__thiscall*)(void*);
+using ViewUpdateFn = void(__thiscall*)(void*, float);
+using ViewTargetFn = void*(__thiscall*)(void*, float*);
+using SetSpinFn = void(__thiscall*)(void*, const float*);
 
 char* g_game = nullptr;
 bool g_ready = false;
@@ -169,6 +221,20 @@ int g_reports = 0;
 bool g_told_bounce = false;
 DWORD g_last_touch = 0;
 int g_touches = 0;
+
+Footing g_footing[kMostFootings] = {};
+int g_unplaced = 0;  // tyre contacts whose chassis couldn't be found
+int g_ticks = 0;
+int g_air_ticks = 0;
+int g_jumps = 0;
+int g_longest_air = 0;
+int g_ground_holds = 0;
+float g_most_spin_taken = 0.0f;
+
+void* g_real_view_update = nullptr;
+char* g_followed_view = nullptr;
+float g_followed[3] = {};
+DWORD g_followed_at = 0;
 
 template <typename T>
 T& field(void* object, size_t offset) {
@@ -220,6 +286,49 @@ bool read_touch(const Contact& contact, const char* geom, Touch* touch) {
     }
 }
 
+// A wheel's body, which a geom inside a transform only has through its shape.
+char* body_of(const char* geom) {
+    char* body = *reinterpret_cast<char* const*>(geom + kGeomBody);
+    if (body) return body;
+    const char* shape = *reinterpret_cast<char* const*>(geom + kGeomShape);
+    const char* outer = shape ? *reinterpret_cast<char* const*>(shape + kShapeGeom) : nullptr;
+    return outer ? *reinterpret_cast<char* const*>(outer + kGeomBody) : nullptr;
+}
+
+// Which ATV a tyre contact holds up, and at which end.
+void note_footing(const Contact& contact, const char* tyre) {
+    __try {
+        char* wheel = body_of(tyre);
+        char* joint = wheel ? *reinterpret_cast<char**>(wheel + kBodyJoints) : nullptr;
+        char* chassis = joint ? *reinterpret_cast<char**>(joint + kJointOtherBody) : nullptr;
+        if (!chassis) {
+            ++g_unplaced;
+            return;
+        }
+        const float* r = reinterpret_cast<const float*>(chassis + kBodyRotation);
+        const float* at = reinterpret_cast<const float*>(chassis + kBodyPosition);
+        const float ahead = -((contact.position[0] - at[0]) * r[2] + (contact.position[1] - at[1]) * r[6] +
+                              (contact.position[2] - at[2]) * r[10]);
+        Footing* slot = nullptr;
+        for (Footing& footing : g_footing) {
+            if (footing.chassis == chassis) slot = &footing;
+        }
+        for (Footing& footing : g_footing) {
+            if (!slot && !footing.chassis) slot = &footing;
+        }
+        if (!slot) {
+            ++g_unplaced;
+            return;
+        }
+        slot->chassis = chassis;
+        slot->seen = g_ticks;
+        if (ahead > 0.0f) ++slot->front;
+        else ++slot->back;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ++g_unplaced;
+    }
+}
+
 // The game's handler runs straight after this, for this same contact.
 void judge_chassis_contact(const Contact& contact, const char* geom) {
     ++g_chassis_contacts;
@@ -257,6 +366,10 @@ void report_tyres(const Contact& contact) {
         ++g_reports;
         logf("vehicle: tyres sank up to %.1f cm, %d chassis contacts, soft tyres %s", g_deepest * 100.0f,
              g_chassis_contacts, g_cfg.strong_atv ? "on" : "off");
+        logf("vehicle: %d jumps over a quarter second, longest %.2f s, %d holds on the ground, spin taken up to %.1f rad/s",
+             g_jumps, g_longest_air * kPhysicsTick, g_ground_holds, g_most_spin_taken);
+        g_jumps = g_longest_air = g_ground_holds = 0;
+        g_most_spin_taken = 0.0f;
     }
     g_deepest = 0.0f;
     g_chassis_contacts = 0;
@@ -298,10 +411,167 @@ void slow_down(char* atv) {
     reinterpret_cast<SetVelocityFn>(g_game + kSetVelocity)(body, slower);
 }
 
+float clamped(float value, float most) { return value > most ? most : value < -most ? -most : value; }
+
+// Pitch is nose up and roll is the right side up, in radians, and their rates are how fast they grow.
+struct Attitude {
+    float pitch;
+    float roll;
+    float pitch_rate;
+    float roll_rate;
+    float climb;  // m/s up
+    float speed;  // m/s along the ground
+};
+
+struct Steadied {
+    float pitch_rate;
+    float roll_rate;
+    float fall;  // m/s taken off how fast it's going up
+};
+
+Steadied atv_steadied(const Attitude& now, int front, int back) {
+    Steadied next = {now.pitch_rate, now.roll_rate, 0.0f};
+    if (front == 0 && back == 0) {
+        const float flight = now.speed > kLeastFlightSpeed ? atan2f(now.climb, now.speed) * kFlightShare : 0.0f;
+        const float pitch_wanted = clamped((clamped(flight, kMostFlightPitch) - now.pitch) / kLevelSeconds, kMostLevelling);
+        const float roll_wanted = clamped(-now.roll / kLevelSeconds, kMostLevelling);
+        next.pitch_rate += (pitch_wanted - now.pitch_rate) * kSettleShare;
+        next.roll_rate += (roll_wanted - now.roll_rate) * kSettleShare;
+        next.fall = kExtraFall * kPhysicsTick;
+        return next;
+    }
+    // Front up and still rising, or back up and still rising.
+    if ((front == 0 && now.pitch_rate > 0.0f) || (back == 0 && now.pitch_rate < 0.0f)) {
+        next.pitch_rate -= now.pitch_rate * kSettleShare;
+    }
+    if (fabsf(now.pitch) > kSteepest) {
+        const float back_down = -copysignf(fminf((fabsf(now.pitch) - kSteepest) / kLevelSeconds, kMostLevelling), now.pitch);
+        if (now.pitch > 0.0f ? next.pitch_rate > back_down : next.pitch_rate < back_down) {
+            next.pitch_rate += (back_down - next.pitch_rate) * kSettleShare;
+        }
+    }
+    return next;
+}
+
+Footing take_footing(char* chassis) {
+    ++g_ticks;
+    Footing found = {chassis, 0, 0, g_ticks};
+    for (Footing& footing : g_footing) {
+        if (footing.chassis == chassis) {
+            found = footing;
+            footing = {};
+        } else if (footing.chassis && g_ticks - footing.seen > kGoneTicks) {
+            footing = {};
+        }
+    }
+    // If it can't be told which ATV a wheel was on, every ATV may have been standing on it.
+    if (g_unplaced > 0) {
+        found.front += g_unplaced;
+        found.back += g_unplaced;
+        g_unplaced = 0;
+    }
+    return found;
+}
+
+float dot(const float* a, const float* b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+void steady(char* atv) {
+    char* actor = field<char*>(atv, kAtvBody);
+    char* body = actor ? field<char*>(actor, kActorBody) : nullptr;
+    if (!body) return;
+    const Footing footing = take_footing(body);
+    if (field<uint32_t>(body, kBodyFlags) & kBodyDisabled) return;
+    const float* r = reinterpret_cast<const float*>(body + kBodyRotation);
+    const float side[3] = {r[0], r[4], r[8]};
+    const float ahead[3] = {-r[2], -r[6], -r[10]};
+    if (r[5] <= 0.0f) return;  // already over, so there's nothing to save
+    const auto spin_method = (*reinterpret_cast<void***>(actor))[kMethodSpin / sizeof(void*)];
+    const float* spin_now = reinterpret_cast<SpinFn>(spin_method)(actor);
+    const float* velocity_now = velocity_of(actor);
+    const float spin[3] = {spin_now[0], spin_now[1], spin_now[2]};
+    const float velocity[3] = {velocity_now[0], velocity_now[1], velocity_now[2]};
+    Attitude now;
+    now.pitch = asinf(clamped(ahead[1], 1.0f));
+    now.roll = asinf(clamped(side[1], 1.0f));
+    now.pitch_rate = dot(spin, side);
+    now.roll_rate = -dot(spin, ahead);
+    now.climb = velocity[1];
+    now.speed = sqrtf(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
+    const Steadied next = atv_steadied(now, footing.front, footing.back);
+
+    const float pitch_change = next.pitch_rate - now.pitch_rate;
+    const float roll_change = next.roll_rate - now.roll_rate;
+    if (pitch_change != 0.0f || roll_change != 0.0f) {
+        const float spun[3] = {spin[0] + side[0] * pitch_change - ahead[0] * roll_change,
+                               spin[1] + side[1] * pitch_change - ahead[1] * roll_change,
+                               spin[2] + side[2] * pitch_change - ahead[2] * roll_change};
+        const auto set_spin = (*reinterpret_cast<void***>(actor))[kMethodSetSpin / sizeof(void*)];
+        reinterpret_cast<SetSpinFn>(set_spin)(actor, spun);
+        const float taken = sqrtf(pitch_change * pitch_change + roll_change * roll_change) / kSettleShare;
+        if (taken > g_most_spin_taken) g_most_spin_taken = taken;
+    }
+    if (next.fall > 0.0f) {
+        const float falling[3] = {velocity[0], velocity[1] - next.fall, velocity[2]};
+        reinterpret_cast<SetVelocityFn>(g_game + kSetVelocity)(actor, falling);
+        ++g_air_ticks;
+    } else {
+        if (g_air_ticks * kPhysicsTick >= kLongJumpSeconds) ++g_jumps;
+        if (g_air_ticks > g_longest_air) g_longest_air = g_air_ticks;
+        g_air_ticks = 0;
+        if (pitch_change != 0.0f) ++g_ground_holds;
+    }
+}
+
+bool steady_safely(char* atv) {
+    __try {
+        steady(atv);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool g_steadying = true;
+
 void __fastcall hook_atv_tick(char* atv, void*, void* step) {
     const bool running = field<uint8_t>(atv, kAtvActive) || field<int>(atv, kAtvRunning) == 1;
     if (g_cfg.strong_atv && running) slow_down(atv);
+    if (g_cfg.strong_atv && g_steadying && !steady_safely(atv)) {
+        g_steadying = false;
+        logf("vehicle: something went wrong steadying the ATV, so it's left to the game");
+    }
     reinterpret_cast<TickFn>(g_game + kTick)(atv, step);
+}
+
+// Moves the point the view follows along with the vehicle, across the ground.
+void keep_up(float* following, const float* was, const float* now) {
+    following[0] += (now[0] - was[0]) * kKeepUp;
+    following[2] += (now[2] - was[2]) * kKeepUp;
+}
+
+bool view_target(char* view, float* target) {
+    __try {
+        reinterpret_cast<ViewTargetFn>(g_game + kVehicleViewTarget)(view, target);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void __fastcall hook_vehicle_view(char* view, void*, float seconds) {
+    float target[7];
+    const DWORD now = GetTickCount();
+    if (g_cfg.strong_atv && view_target(view, target)) {
+        if (view == g_followed_view && now - g_followed_at < kViewGapMs) {
+            keep_up(reinterpret_cast<float*>(view + kViewFollowing), g_followed, target);
+        }
+        memcpy(g_followed, target, sizeof(g_followed));
+        g_followed_view = view;
+        g_followed_at = now;
+    } else {
+        g_followed_view = nullptr;
+    }
+    reinterpret_cast<ViewUpdateFn>(g_real_view_update)(view, seconds);
 }
 
 // The handlebars and the rider read the same limit, so it's only changed while this one runs.
@@ -324,6 +594,7 @@ void vehicle_contact(Contact* contact) {
     else if (second == Part::Chassis) judge_chassis_contact(*contact, contact->second);
     if (first != Part::Tyre && second != Part::Tyre) return;
     report_tyres(*contact);
+    note_footing(*contact, first == Part::Tyre ? contact->first : contact->second);
     if (!g_cfg.strong_atv) return;
     contact->mode = (contact->mode & ~kContactBounce) | kContactSoftErp | kContactSoftCfm;
     contact->surface[kSurfaceSoftErp] = kTyreErp;
@@ -375,7 +646,9 @@ void vehicle_attach_game(HMODULE game, bool verified) {
     const bool tick = patch_bytes(g_game + kTickPointer, &game_tick, &our_tick, sizeof(our_tick));
     const bool controls = vtable_patch(reinterpret_cast<void**>(g_game + kControlsSlot),
                                        reinterpret_cast<void*>(&hook_atv_controls), &g_real_controls);
-    logf("vehicle: brakes=%d steering=%d", tick, controls);
+    const bool view = vtable_patch(reinterpret_cast<void**>(g_game + kVehicleViewUpdateSlot),
+                                   reinterpret_cast<void*>(&hook_vehicle_view), &g_real_view_update);
+    logf("vehicle: brakes=%d steering=%d view=%d", tick, controls, view);
 }
 
 int vehicle_test() {
@@ -465,6 +738,34 @@ int vehicle_test() {
     if (!about(atv_speed_after(0.2f, 0.2f, kGearBack), 0.2f)) return 17;                   // stopped, so back reverses
     if (!about(atv_speed_after(15.0f, 15.0f, kGearNone), 15.0f - drag)) return 18;         // no keys
     if (!about(atv_speed_after(0.04f, 0.04f, kGearNone), 0.0f)) return 19;                 // and never past a stop
+
+    // The view keeps up across the ground, but rises and falls the game's way.
+    float following[3] = {10.0f, 5.0f, -3.0f};
+    const float was[3] = {12.0f, 5.0f, -3.0f};
+    const float moved[3] = {13.0f, 6.0f, -5.0f};
+    keep_up(following, was, moved);
+    if (!about(following[0], 10.0f + kKeepUp) || following[1] != 5.0f || !about(following[2], -3.0f - 2.0f * kKeepUp)) return 36;
+
+    // In the air, a nose coming up fast is slowed and turned back, and it falls faster.
+    const Steadied flipping = atv_steadied({0.2f, 0.0f, 3.0f, 0.0f, 0.0f, 15.0f}, 0, 0);
+    if (flipping.pitch_rate >= 3.0f || flipping.pitch_rate < 0.0f || !about(flipping.fall, kExtraFall * kPhysicsTick)) return 25;
+    const Steadied rolling = atv_steadied({0.0f, 0.3f, 0.0f, 0.0f, 0.0f, 15.0f}, 0, 0);
+    if (rolling.roll_rate >= 0.0f || rolling.pitch_rate != 0.0f) return 26;                // level side to side
+    const Steadied climbing = atv_steadied({0.0f, 0.0f, 0.0f, 0.0f, 15.0f, 15.0f}, 0, 0);
+    if (climbing.pitch_rate <= 0.0f) return 27;                                            // nose along the way it flies
+    const Steadied steep_flight = atv_steadied({kMostFlightPitch, 0.0f, 0.0f, 0.0f, 50.0f, 5.0f}, 0, 0);
+    if (!about(steep_flight.pitch_rate, 0.0f)) return 28;                                  // but only so far
+    // On all four wheels it goes where the ground takes it.
+    const Steadied bump = atv_steadied({0.3f, 0.1f, 2.0f, 1.0f, 3.0f, 15.0f}, 2, 2);
+    if (bump.pitch_rate != 2.0f || bump.roll_rate != 1.0f || bump.fall != 0.0f) return 29;
+    // On one axle, the end that's up stops rising, but can come down.
+    if (atv_steadied({0.3f, 0.0f, 2.0f, 0.0f, 0.0f, 10.0f}, 0, 2).pitch_rate >= 2.0f) return 30;
+    if (atv_steadied({-0.3f, 0.0f, -2.0f, 0.0f, 0.0f, 10.0f}, 2, 0).pitch_rate <= -2.0f) return 31;
+    if (atv_steadied({0.3f, 0.0f, -2.0f, 0.0f, 0.0f, 10.0f}, 0, 2).pitch_rate != -2.0f) return 32;
+    // Past 45 degrees it's brought back, either way.
+    if (atv_steadied({1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 2.0f}, 2, 2).pitch_rate >= 0.0f) return 33;
+    if (atv_steadied({-1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 2.0f}, 2, 2).pitch_rate <= 0.0f) return 34;
+    if (atv_steadied({1.0f, 0.0f, -2.0f, 0.0f, 0.0f, 2.0f}, 2, 2).pitch_rate != -2.0f) return 35;  // already coming back
 
     constexpr float kFullLock = 0.5236f;
     if (!about(atv_steering_limit(0.0f, kFullLock), kFullLock)) return 21;

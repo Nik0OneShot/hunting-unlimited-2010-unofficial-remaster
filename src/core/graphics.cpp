@@ -246,6 +246,14 @@ void* graphics_wrap_gl(const char* name, void* proc) {
     return proc;
 }
 
+void* graphics_gl_function(const char* name) {
+    HMODULE opengl = GetModuleHandleW(L"opengl32.dll");
+    if (!opengl) return nullptr;
+    if (void* proc = reinterpret_cast<void*>(GetProcAddress(opengl, name))) return proc;
+    const auto get_proc = reinterpret_cast<GetProcFn>(GetProcAddress(opengl, "wglGetProcAddress"));
+    return get_proc ? get_proc(name) : nullptr;
+}
+
 void graphics_in_context(int size, int samples, const std::function<void()>& work) {
     ThrowawayContext context(size, samples);
     if (context.ready()) work();

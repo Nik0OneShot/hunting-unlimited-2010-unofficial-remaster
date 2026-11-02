@@ -353,6 +353,7 @@ bool __fastcall hook_plant_in_view(const char* frustum, void*, const float* box)
 void __cdecl hook_loading_message(const char* format, const char* path) {
     g_message(format, path);
     g_landscape = path;
+    stash_map_loading(path);
     g_wanted = true;
     g_ready = false;
 }

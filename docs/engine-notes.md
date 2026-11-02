@@ -465,6 +465,14 @@ Longshot hooks the one `dJointCreateContact` call at `+0x12765d`, and for the pl
 to the direction of the walk, which lines the box up with it. In the game that left a typical drift of 1 degree over 3 m,
 across 57 straight stretches. It logs that drift, with the heading, and whether the correction is on.
 
+### Who the player is
+
+`game + 0x544` is the current game mode, and `+0x100` of it is that mode's player. It's only a hunter (table `0x19bb70`)
+in a hunt, as each mode makes its own: `0x19b098` makes the hunter, `0x19b5b0` makes the one with table `0x19bc48`, and
+`0x19aef8` makes another. The world draws behind the intro and menus with one of those in place, and `+0x8c` on those
+isn't a view, so anything run from a draw has to check the table before going near a hunter's fields. `walking_player`
+does that.
+
 ## Speed and noise
 
 Speed on foot is picked at `+0x13501`: 1.6 m/s, or 4.5 running, times the stance (1, 0.5, 0.2) times the direction, from a table at
@@ -524,7 +532,17 @@ most, on the main thread at the start of the UI:
    itself, as its second pass pairs the list with every animal from the first. An animal's clock at `+0x754` starts at 0, which only
    suits a hunt that's loading, so it's set to the time now. Otherwise its first update would count the whole hunt as one step.
 
-It stops at 60 alive or 120 listed. If anything faults, it stops for the rest of the run rather than risk the hunt.
+A hunt has 11 goals at `+0x10`, a kind and a number each, and a list of bytes for each at `+0x80`, 0x10 bytes apart. A goal of kind 1 keeps a byte
+for every animal, by its place in the manager's list, which is the index `+0xbd480` returns and the animal's trophy keeps at `+0x114`. Those lists are
+sized to the animals when the hunt starts (`+0x92c9b`), so animals brought in later are past the end. A hit on one then stopped the game, as the
+hit's scoring at `+0x8fa80` looks the first goal's list up by it, and an index past the end aborts at `+0x8fb83`. After each herd arrives, Longshot
+grows every kind 1 list to the animals with the game's own resize, `+0x7e00`, and zeroes the new places, as the hunt does.
+
+With every tag used, the hunt says its goals are accomplished, and to end it (`+0x90696`). In a free hunt that's pointed at Longshot's own text,
+which says the bags are full, to stash them at a camp or to leave the hunt.
+
+It stops at 90 alive within 1000 m, or 320 listed. Animals left far behind don't count towards the first, or none would ever arrive
+as the hunter moves on. If anything faults, it stops for the rest of the run rather than risk the hunt.
 
 `game.def` is only held while a herd is made. A resource still held when the game quits stops its memory manager from shutting down, with
 "[mem] Number of safe iterations exceeded", and the game crashes on the way out.
@@ -541,6 +559,181 @@ even with nothing around. Danger then runs `+0xb5bf0`, which picks goal 0xb when
 position, at a gallop, however far away and whether it has noticed or not. So free hunt animals now start with no stress, and `+0xb689d` hides what stress
 they gain while both fears are below 0.1, so it only counts while they're reacting to something. Fear fades slowly, so a scared animal stays wary.
 Prey still runs from predators it notices within about 70 m. That's real behaviour and is left alone.
+
+## Stashing
+
+Bagging puts an animal's trophy (its `+0x144`) in one of the profile's tags, at `+0x90420`. The tags are a list at the profile's `+0xb0`, each with its trophy at `+4`, and once they're all used a free hunt can't bag another. After the hunt, the trophy room takes each trophy out with `+0x96df0` (at `+0x40ab3`) and holds it. Move to Trophy Room then puts it in the profile's trophies, the list at `+0x20` of its `+0xac`, with `+0xf3e70` (at `+0x3ff7f`). Closing the room saves the profile with `+0xd2450`, which the hunt calls itself too.
+
+What the interact key can do is a list on the hunt (the current game's `+0xa8`) at `+0x140`. `+0x929d0` adds to it a provider, whose `+4` scores it and whose `+8` does it, a label, which is the number of a template in `def/ui/txt.def`, and an argument. Every frame each one's scored (`+0x93057`), the list's sorted with the lowest score at or above 0 first, and that one's label is shown. The key (`0x8f`, read at `+0x13244` on foot) does it (`+0x93140`). An animal to bag scores its reach squared less how far off it is, squared.
+
+In a free hunt Longshot adds a stash to that list, with a label added after the game's 65. It scores a million when you're on foot at a camp with something bagged, and below 0 otherwise, so anything else on offer goes first. Camps are read as the landscape loads, from the map's `world_units_filename` in its `world.sii`: every `body_inst` whose `body_desc` is a house, cabin, hut, tent, campfire, garage, shed, barn, roofed shelter, ruined house, railway station, pickup or Land Rover. Each hunting map has from 2 to 13. A camp reaches 10 m past its model's box, turned the way the model is placed. The box is in the model's `.pmg`, at `+0x24`, after the version and the bounding sphere: a station is 9 by 33 m, a pickup 2 by 5. The lighthouse isn't a camp, as its box takes in a beam 100 m long. Stashing does what the trophy room does with each trophy, saves the profile, and puts up a message with `+0x816a0`, the way bagging does. The results at the end of the hunt only list what was bagged after the last stash.
+
+## Wildlife
+
+**Herds.** `freehunt_counts` is a count of animals, not herds, and `maximal_herd_size` isn't a herd's size either. The generator at `+0xbe4b0` adds
+up each slot's count, and scales them all down to 40 if that's more (`+0xbe5a8`, then `+0xbdb90`). It splits each slot into males and females, then
+hands them out in groups of `(0.05 + 0.95 * random) * maximal_herd_size`, rounded down and at least 1, each at its own start point on a 10 m circle. So the old 2, 3 and 5 with
+the default of 4 made groups of one to three. `game.def` is rewritten as it loads with new numbers for each species, and the limit goes to 127, as its
+check only has room for a byte. The roll for a group's size at `+0xbe944` is squared, which gives many small groups and the odd very large one. A count list
+can be any length, and the slot's number picks from it, so the entries after the three densities are the numbers 1 to 15. That's how the spawner asks for a herd of an
+exact size. It also makes that roll 1 while it does, so the herd stays in one group.
+
+**Young.** Every species has a type with `gender` 3 and a variant in its model, but the generator gives that gender a count of 0 (`+0xbe81e`). So they're made by changing
+generated animals before they're created, which is just their `type` and `weight`, plus `mate` so they follow the mother. Males with antlers are left alone. Females of buffalo, goats,
+elephants and bighorns have horns, and so do their young, from `antlers_young.sii`. That's a shorter list, one shape for goats and two for elephants, and a `main_beam` past its end is an array overflow at `+0xca4dd`
+as the animal is made. So young always get `simple_beam_part0`. Bears and cougars live alone or as a mother with up to two young, so anything else in their group changes to suit.
+
+**What an animal does.** `+0xb66a0` is run for each animal. It works out its needs from the fields below, picks the largest at `+0xb5d70`, and runs the goal that goes with it.
+Longshot changes those fields around the call, and puts back the difference, because the goal it runs can change them too.
+
+| Brain offset | | Need |
+| --- | --- | --- |
+| `+0xdc`, `+0xe0` | Fear of the hunter, and of other animals | Danger, with `+0x124` stress |
+| `+0xe4` | The pull of prey | Hunger, times `+0x110` |
+| `+0x110` | Hunger | Hunger |
+| `+0x114` | Thirst | Thirst, as it is |
+| `+0x118` | Tiredness | Rest |
+
+**Water.** Thirst is goal 5, and hunger goal 2. Both ask `+0xbb460` for the best of the map's `attract_area` units, kept at `+0x8c` in the animal manager, and walk there. Each area has a
+resource at `+0x2c`, 0 for food and 1 for water, and scores 50 times the animal's hunger or thirst, over how far away it is. An area counts as food or water depending on which the animal wants. So animals have always
+gone to water, but thirst starts at 0.1 to 0.4 and has to beat everything else. Longshot gives each herd turns of being thirsty, using the mate's address so they go together, with hunger held at 0 so nothing else wins and the score
+goes to water. Every map has water areas but Alaska, which has none, so animals there keep to food. New herds arrive near water half the time, if there's anywhere to.
+
+**The truce.** A hunter that's thirsty, and for 150 seconds after, has its hunger, the pull of prey and both fears hidden. Hunger alone doesn't start a chase, but the pull of prey being at least `+0x104` does, at `+0xb4a2d`. Danger is what starts an
+attack, at `+0xb5bf0`, so hiding the fears stops that. It ends for 90 seconds if the animal's hurt (`+0xbe6`), a shot goes off within 60 m, or the hunter's within 15 m. With nothing to do, it wanders, which is
+what moves it on from the water.
+
+**Time of day** follows the clock, below. At dawn (5 to 9) and dusk (16 to 20), hunger counts for 1.4 times and tiredness half, and animals are thirsty for longer. In the middle of the day (11 to 14) hunger
+counts for 0.6 and tiredness twice, and turns at the water are further apart. At night (21 to 5) it splits: grazers get 0.5 and 2.5 with the longer gap at the water, and hunters 1.6 and 0.5. Most birds roost, leaving 3.
+
+**Cost.** The manager's tick at `+0xbcd50` gives two animals a heavier look each frame, then calls every animal's `vf34`, `+0xc3f40`, whatever its distance. On one PC 114 animals took `sim` from about 0.5 ms to between 3 and 8 ms, while `world` didn't change, as most are out of
+view. That tick takes the seconds passed, and everything in it is worked out from that, so one that's skipped can catch up. So beyond 130 m it runs 30 times a second, beyond 300 m 15 times, and beyond 600 m 8 times, or 30 for anything in view through a scope. They're all in the three
+tables with that method, `+0x1a4ca4`, `+0x1a561c` and `+0x1a6184`. Every 30 seconds the log says how many ran and how many were saved.
+
+**Panic.** An animal that isn't a hunter, with fear of the hunter over 0.35, raises an alarm once a second, at 0.75 of its fear. Any other within 60 m takes that on as fear of the hunter. So it spreads through a herd, fading as it goes, and dies out after a few animals in a row. Danger
+then sends them running from the hunter's position. Fear of other animals isn't passed on, as it would become fear of the hunter, and `+0xb5bf0` lets anything with aggression at `+0xb8` attack the hunter on that, from any distance. Past 100 m that aggression is hidden, so it runs. An animal being hurt (`+0xbe6`) or killed (`+0xbe7`, looked for twice a second) raises an alarm at full strength.
+
+Danger wins at `+0xb5ed0` when it's the biggest need or past 0.8. Being thirsty is 0.95, so fear that's been passed on, which is 0.75 at most, never beat it. So any animal that's frightened, or a hunter that's provoked, stays away from the water for 5 minutes.
+
+**Night.** The senses at `+0xb59c0` multiply what they find by three numbers in the object at `+0x10` in the animal manager: smell at `+0x10`, sight at `+0x14` and hearing at `+0x18`. The call at `+0xb6868` is wrapped, and changes those around it for each animal. Darkness goes from 0 to 1 between 19:00 and 21:00, and back between 5:00 and 7:00. Smell fades with it, leaving hearing as it was. Sight only reaches 18 m in the dark, or 30 m if the hunter has a light on. The game already scales sight by the light level, which at night is close to nothing, so up close that's divided back out, and an animal sees about as well as it would by day.
+
+**Lures.** Calls, scents, decoys and carcasses all work the same way. `+0xba910` reads a list of who's drawn from a def, `+0xba1f0` adds it to the list at `+0x40` in the animal manager, and each animal adds them up at `+0xbc9c0`. That gives an appetite for food at `+0xfc` and mating at `+0x100`, smoothed into `+0x104` and `+0x108`, and the strongest one's place at `+0x44c` and `+0x458`. A mating need is `+0x108` added on, and over a random number, `+0xb4b00` starts goal 3 with a 1, which walks to that place. That goal is shared by every animal, predators included. A visual lure stops at 90 m, and lives on an item, so a light skips all that and writes the pull and the place itself, around `+0xb66a0` like everything else here. It works from 21:00 to 5:00, within 100 m of a lantern, or 150 m and within 25 degrees of a beam. The goal only reads the place as it starts, so its stage is set back to 0 every 4 seconds for it to look again.
+
+An animal being drawn in that has any sight of the hunter at `+0x130` gets real fear of 1, so it runs, and raises the alarm through its herd, and won't come again for two minutes. On a tree stand sight is 0, so they don't. A predator takes that fear the way it takes any other, which can mean attacking.
+
+**Running away.** Danger from the hunter is goal 11, which is goal 12, running from something, aimed at the hunter. It asks `+0xb1d90` where to go, from `+0xb201b` and again at `+0xb20b9` whenever it gets there or gets stuck, and then starts a new path.
+That path is only made for a place within 110 m (`+0x4b0`, squared at `+0xc1334`). Past that the movement says 1, which asks again, every update, so a place further off has it turning on the spot and costs a new path each time. That picks 50 to 100 m off, up to 45 degrees either side of straight away, fresh each time, which is the zigzagging and circling, and with rocks and trees in the way it could end up heading back past the hunter. It stops 500 m away. Longshot answers instead: each herd gets one line, kept for 25 seconds at a time unless the threat moves 40 m. It tries straight away, then 20 degree steps to each side up to 80, and throws out any that are over 0.4 m deep 60 or 120 m along. Of the rest, climbing counts for a little against being straight away, as `+0xd4540` gives the ground's height too. The place is 90 m along that line from where each animal is. A herd with no dry line is cornered. One that can fight, within 40 m, has its aggression at `+0xb8` set to 1 and its goal's stage at `+0x248` set to 3, which makes `+0xb5d70` pick again, and `+0xb5bf0` then attacks. Anything else goes straight away regardless. None of them heads for the hunter to get away.
+
+**Attacking.** Goal 13 goes after the hunter from `+0xb25a9`. Within 75 m (`+0xb265c`) it charges, with the `attack` processor. Further off it
+walks with `move`, at a pace of its distance over 300 m, so slower as it closes: a quarter at 75 m. Past 300 m it gives up. Longshot starts attacks
+within 100 m, so every one crept the first stretch. It charges from 150 m instead.
+
+**Lines.** A herd keeps one line, but an animal it would take towards what it's running from, which is one on the far side, takes its own. The log
+counts those, and, for anything running, full circles within 20 seconds and running at the hunter from within 60 m without attacking, with the
+goal, stage, processor and movement mode of the latest, and for a circle, what it's running from and how far, how many new places to run to it was given meanwhile, and how far off the one it's heading for is. The first hunt with this put every circle on animals running away, 400 to 600 m from the hunter. Speed is measured over half a second, as distant animals only move on their own ticks.
+
+**Places to go to.** A place to run to is at `+0x49c`. Running away (movement mode 1, from `+0xc125b`), it's reached within the near distance,
+20 m for running away, and walking (mode 0, `+0xc11ec`) within 1.1 m, both measured in three dimensions, height included. Longshot's places
+along a line were left at the height the animal started from, so 90 m along a mountainside one could be 20 m above the ground or under it. It
+could never get close enough, never asked for another, and ran round and round underneath. The second hunt with the circle log showed it: every
+circle was running away, with no new place asked for during it. Places to run to and beds now take the ground's height there, from `+0xd4540`
+looked at from 120 m above.
+
+That wasn't all of it. The next hunt still had goats running from predators round places 50 to 80 m off, on the ground, and never reaching
+them. So anything running away that turns three quarters of a circle without being given a new place is given one itself: 40 m off, about
+60 degrees to one side of its line away, alternating sides. It's written to `+0x49c`, and `+0xc1050` sets the movement going again, as
+the goal does after picking a place itself. The log counts how many went round in circles and how many were sent somewhere else.
+
+**Senses.** `+0xb59c0` works out sight, smell and hearing of the hunter, and adds them, by the seconds passed, to how aware the animal is. Sight
+stops at 90 m (`+0xc2c17`), smell at 300 m and hearing at 250 m, so an animal further off than that can't notice the hunter at all. What
+sets one off is a predator, a shot, a bullet going past, or fear passed along its herd. Anything that starts running away while it's in
+the binoculars' view gets a line in the log, with its fears of the hunter and of other animals, and what it's running from and how far.
+
+**Mountain goats.** They live up high. As the hunt starts, each goat herd moves to the best ground within 200 m of where the generator put it,
+and one that arrives later to the best within 250 m of its spot that's still 500 m from the hunter. Best is highest, with steepness worth 25 m of
+height for a slope of 1 in 1, measured 10 m round each place, looking at 16 directions every 25 m out. Each goat keeps its home, which moves to
+anywhere at least as high that it stands calmly. While calm, not thirsty and not drawn to anything, one more than 70 m from home walks back. Goats
+drink a third as often as anything else, and running away, climbing is worth 1.2 against 0.35 for everything else.
+
+**Drinking.** Bears have no animation for drinking or grazing, so at the water they stand. They drink for 40 seconds at a time. A hunter drinking,
+or wandering after, ignores the hunter unless provoked, and seeing or hearing the hunter within 60 m now provokes it.
+
+**Sleep.** Tiredness is goal 6, `+0xb1290`, which stays put with the `rest` processor (index 0 of the names at `+0x1e1560`). From 21:00 to 5:00 a grazer that's calm picks a bed within 50 m, dry, higher and further from the hunter, or one around wherever the animal it follows chose. It walks there the same way it would to a light, then rests with its tiredness held at 0.9 and no turns at the water. After 30 seconds still on that goal it's asleep. The senses at `+0xb59c0` get no sight from it, and hearing (`+0x18` of the manager's object, and kept at `+0x138` of the brain) at a third. What it hears each second wakes it a little, a shot by how close it was, up to 400 m, and anything that frightens it, hurts it or has a bullet pass within 8 m wakes it at once. A bullet passing that close frightens anything. The animal a herd follows stays awake.
+
+**Wounds.** Hurt is `+0xbe6`, which `+0xb5f29` reads as the goal's picked, and then nothing else gets a look in. So it's hidden while picking, around `+0xb66a0` like the rest, and put back. A wounded animal runs with full fear until it's 150 to 300 m from the hunter, then lies up with its fears hidden. Coming within 45 m, being seen, or being heard at more than 0.3 sends it on another 120 m.
+
+**Young.** A bear or cougar with young following it, within 40 m of the hunter or of them, gets 0.9 fear of the hunter and aggression 1, so it attacks. Danger only picks between running and attacking when it's first picked, and at 0.9 it always wins, so her goal's stage is set to 3 until she's attacking, or one she was already running away on would carry on. The generator only sets `mate` on the animals after the first in each group (`+0xbe91b`), and `+0xc57e0` skips an empty one, but the first in Longshot's family may not have been the first in the generator's. So hers is cleared, or she'd look like one of her own young.
+
+**Contact.** Each frame Longshot works out how fast each animal's moving from where it was. One within 1.6 m that's coming at 2 m/s or more knocks the view along its way, harder up to 8 m/s, tipping it back for a knock from the front and rolling it for one from the side. The foot view's `+0x20` and `+0x2c` take it after the head turn, on springs that settle in about half a second.
+
+**Running.** An animal moves by its animation. Each tick (`+0xc3f40`) takes how far the animation's root moved (`+0x173f00`, at `+0xc3fe7`), times the animal's size at `+0x344`, turns it to face the animal's way, and adds it to where it is. The animation goes on by the seconds passed times `+0x3b0`, which is 0.9 to 1.2, picked as it's made (`+0xc531a`). A `.pma` ends with the root's move for each frame, and from those, running is slow: a whitetail's run covers 5.9 m/s, an elk's 4.8, a bison's 3.4, a black bear's 3.5 and a mountain goat's 3.3. While it's in the `attack` or `run_away` state (4 and 5 of the names at `+0x1e1560`, kept at `+4` of `+0x75c`), Longshot raises `+0x3b0` for the tick, up to 2.2 times, and stretches the root's move past that up to 1.6 times, to reach a top speed for each kind: 13 m/s for deer, 20 for pronghorn, 17 for cougars, 18 for lions, 12 to 14 for bears and bison, and 15 for wolves. Nothing's made slower.
+
+Turning is `slerp_generic`, at `+0xc41c0`, from the way it faces to the way it's going, by the seconds passed (1.5 times that in one state). That's about a second to mostly come round. It's the only call through that import here, so it goes through Longshot, which takes 2.5 to 8 times as much off each tick running, the most for cats and wolves, and less of that walking.
+
+Each kind can sprint flat out for 12 seconds (cougars) to 60 (wolves and pronghorn), slows down to 0.6 of its top speed as that runs out, and gets it back resting over 45 seconds. A hunter that's run itself out gives up on you or its prey for 40 seconds. A wounded animal runs at 0.7 and tires faster, and young at 0.8, which their mothers keep to. Agile kinds cut 70 degrees off to the side for about a second when what they're running from (at `+0x480`, whose second method says where it is) is within 25 m. Bears, bison, moose and elephants sometimes bluff, stopping short or veering off 8 to 20 m away and leaving you alone for 30 seconds.
+
+**Blood.** A wounded animal drips at `+0xc16b0`: while `+0xbe9` is set, every 10 over its bleeding at `+0xbf0`, times 2 to 4, seconds (or 20 when barely bleeding), it calls `+0xad0c0`, which drops one stain within 0.4 m, onto the ground. A hit drops one more (`+0xc6561`). The stains are `blood_trail` in `sticker.def`, 0.16 to 0.25 m, at most 50, 200 and 400 of each. Longshot drips with 4 instead of the 10 (`+0xc16e6`), drops 1 to 6 at a time by how hard it bleeds, so lung shots leave the most, throws 6 where it's hit, and 10 for a pool where a wounded animal lies up (2 more every 20 seconds) or something dies. The stains are 1.6 times as big and three times as many are kept.
+
+Blood used `dry.tex.fog.nc.decal.over`, blended over the ground with no lighting, so it shone at night. Only the 6 blood materials use it. They're given `dry.tex.fog.nc.decal.mult` instead, whose state, `nc_xx_x_decal_mult.rs`, nothing else in the game uses. That's rewritten to multiply twice, `dst_color` by `src_color`, and to drop what's under half opaque, as the stains' clear texels are dark red rather than black. So a stain is the ground made red, as dark as the ground. Materials and effects are opened by `gfxshared.dll` and `loaders.dll`, which get the same file hook as `p3shared.dll`.
+
+A bleeding animal marks where it is every 2 seconds. A hunter that isn't busy goes for the newest mark it can smell, within 250 m and 3 minutes, until it's within 25 m, when its own hunting takes over.
+
+**Tracks.** Each tick adds how far it moved to `+0x2e4`, and at `spoor_dist` times its size (`+0x2e8`), `+0xacf00` puts a print down, on soft ground only, through `+0xf3670` at `+0xad0a4`, from the trail at `+0x2f0`. Longshot stamps each one twice, which darkens it more as they're subtracted, makes them 1.7 times as big, puts them 0.6 of the way apart, keeps three times as many, and spaces them 1.8 times as far running. The hunter leaves prints with `hunter_trail`, which is in `sticker.def` but never used: `+0xacf00` only reads a handful of fields, so it's handed a block with just those.
+
+**Calls.** An animal has 13 sounds, loaded at `+0xb02f4` from the keys at `+0x1e13c0` into the list at `+0x31c`: two footsteps for each of dirt, grass, leaves, snow and water, two for falling, and `s_specific`, its call. `+0xae1b0` plays the call where the animal is, if `+0x381` is set, which `+0xae2e0` sets when it's within 200 m (40000 at `+0x1a2044`, compared at `+0xae329`). The call is heard from 25 m down to nothing at 200 m (`+0xb04f2`). The only time the game plays it is answering a call item, at `+0xb6c2f` and `+0xb6de8`, with the `call` animation (0x28, through `+0xb3680`), with the species' `call_back` chance from `brain+0x74`. So without calls nothing's ever heard. Boars, cougars, elephants, kudu, lions and wolves have `an_missing.ogg`, which is a second of silence, and red deer point at two files that don't exist. Both the distance check and the sound reach 400 m now. Wolves get the howls from the north maps' ambience, and red deer the elk's calls. Then each species with a voice calls in alarm, once per herd every 30 seconds, as it's hit, as a bear comes for you or defends its young, and now and then to keep in touch, anywhere from every 2 minutes for bison to every 15 for deer. Males of elk, red deer, moose and turkeys call four times as often at dawn and dusk. At night a wolf leading a pack, or alone, howls every few minutes, and the rest join in within 4 seconds. Nothing calls while asleep or in danger.
+
+**Music.** The hunt's `vf30` at `+0x2ed0` plays one of five stings from `script/scenic_music`: 0 target sighted, 1 an animal attacking an animal, 2 an animal attacking the hunter, 3 and 4 for openers. The game plays 1 at `+0xb27a0` whenever any hunter starts on anything, with no check of how far away that is.
+It always did that, but it took a lot more animals for it to come up every few minutes. Longshot drops that sting, so the chase music is 2, at `+0xb15be`, which only plays for the hunter.
+
+That one comes at the start of goal 13, which `+0xb5bf0` can pick for anything with any aggression at `+0xb8` and more than 0.2 fear of the hunter, however far away. Hearing reaches 250 m, so that can be something a long way off in the dark, and the music has nothing to do with what you can see. So the sting's held back past 80 m, and played if that animal gets within 80 m still on that goal. If it gives up, it never plays.
+
+Once a second, `+0x939f2` looks for any living animal within 200 m (40000 at `+0x93b16`) that's on the hunt's list of targets, and 0 plays at `+0x93ca6` as that goes from none to some, with no check of whether it can be seen. With this many animals that can be the first second of a hunt, so it's dropped in free hunts too. Missions keep it. 4, the opener at `+0x95172`, is left alone. Every sting goes in the log, with the animal and how far away it was. Birds aren't involved in any of this, as they're `ambient_animal_bird_u`, run by their own server, with none of the needs and goals of an `ai_animal_u`.
+
+**Carcasses.** Each species' `carcass` section lists who it draws, and `effect_range` in `carcass_base` how far. Those go from 0.3 to 0.9 and 400 to 900 m. Vultures come from the birds: their chances are a running total at `+0x58` in
+the server, and the rest are scaled down while the hunter's within 400 m of something that's been dead for under 5 minutes.
+
+**Birds.** Each map's `ambient_animals.sii` sets how many, how often and how far away. The server's at `+0x30` in the animal manager, with a timer at `+0x68` that runs to the period at `+0x64`, and the most allowed at `+0x80`. A shot, an alarm nearby or
+the hunter moving at 7 m/s shortens that for 1.5 seconds. These go up in the air where the server would have put them anyway, so it isn't birds lifting off the ground around you.
+They're rewritten by the same hook as everything else, but `load_unit_tree` opens files from game.dll, so game.dll's import has to be patched too.
+
+**Water.** A bullet's flight is the first method of its listener at `+0x1a8480`, `+0xd4920`, which casts a ray at `+0xd4a83` with `+0xd4430` and goes through what it hit, nearest first. Some kinds are passed through, and anything else stops it. A hit's 0x20 bytes have what was hit at `+0x1c`, and `+0x6c` of that is its kind. Kind 1 is water, which `+0xd6f6b` only throws up a splash for. So water's taken out of that list, and the bullet goes on to whatever's in or under it. The rangefinder's ray, at `+0xd4f03`, is left alone.
+
+A thirsty animal walks to `+0x8` of the water area, and stops within its `+0x14`, both filled in by `+0xbb3d0` at `+0xb1c8a`. That's often well into a lake. When it's deeper than 0.4 m there, the place is moved back along the line to the animal, a metre at a time, to the first spot that isn't, and it walks right up to that.
+
+**Trees.** A bullet that hits an object gets surface 15, or 8 if it's a plant (`+0xd6fd2`). The table of impacts at `+0xd68b8` has nothing for 8, so it points at dirt now.
+
+## Day and night
+
+The game has a whole clock. The environment (`+0xe6080`) keeps seconds into the day at `+0x84`, and its tick adds ten times real time unless `+0x88` is set, which some kinds of hunt do as they load (`+0x95228`, depending on the mode at `+0x24`). Everything else already reads that clock each frame:
+
+- The sun (`+0x68` in the environment) takes the time from it at `+0xec960`, and interpolates its `ambient_levels`, `diffuse_levels` and `specular_levels` by the minute. These are 24 entries of 4 floats each at `+0x24`, `+0x34` and `+0x44`.
+- `+0xec210` sets how high it is, from 20 to 60 degrees between 5:00 and 12:00 and back by 21:00. It never goes lower.
+- The sky is ordinary `hu.dif` material, so it's lit by those levels like anything else, and fog is multiplied by them.
+- `+0x94` in the environment is how much light there is, from the fog. Animal sight is scaled by it at `+0xb5a11`, so they already see less at dark.
+
+So in free hunts Longshot sets `+0x88`, so the two can't add up, and writes `+0x84` itself to take `free_hunt_day_minutes`. A game minute is the smallest step the light takes, so at the default that's every 2 seconds, too small to see.
+
+Hours 22 to 4 have no light at all, which would be pure black, so ambient gets a floor of moonlight once the hunt starts. Only ambient, as diffuse light would come from a sun that's still 20 degrees up. That's still up there at night and would show as a faint disc, as `+0xac` in the sun, how much of it is drawn,
+comes from the light level. So from 21:00 to 5:00 that and its dazzle, `+0xcc` and `+0xd0`, go to 0 just before each frame is drawn, after the tick has set them.
+
+`@include`d files are read inside p3core, not through the imports Longshot hooks, which is why this works on the loaded table and not on `sun_normal.sui`.
+
+The hunt's tick also ends things at 21:00, with "Hunting time over" at `+0x93cef`, which is checked at `+0x93cd8`. In a free hunt that branch at `+0x93ce3` always jumps past it, and it's put back for any other kind of hunt.
+
+Nothing reached 21:00 before, so a bug in the game never came up. Its lists of names for each hour, at `+0x1e57c0` and `+0x1e5818`, are missing the commas after 21, so `@@g_clock_21@@@@g_clock_22@@@@g_clock_23@@` is one string and each list is 22 long. So 21:00 translated as three times run together, with a stray number filling in the second `%02d`, 22:00 read "clear" out of the next table, and 23:00 read a float as a pointer. Each list is only read in one place, `+0x101ca4` and `+0x101d04`, so both read Longshot's lists instead.
+
+## Lights
+
+The engine has one light, the sun, with no way to add another. So the flashlight and lantern are a pass over the finished picture, like the rest of post-processing. It multiplies each pixel, by how much light a surface has now against what it would have by day, so dark textures stay dark, and by day there's nothing to add.
+Dividing by the moonlight's colour takes out its blue, too. The depth of the world says how far each pixel is. A beam fades with its angle from the middle of the view and with distance, and a lantern only with distance. Nothing about the game's materials had to change, so it lights grass, trees and animals the same. As it has no normals, surfaces don't catch the light any differently by which way they face.
+
+The depth has to be copied at the world's own flush of the queues, `+0x102f99`, because the weapon's at `+0x102fea` comes after a clear. The projection is the last one set up on a full window rectangle by then, for the same reason.
+
+Items take two steps. Choosing one is `+0xd8e0`, with the item's name, which is the name of its def. The hud calls it from `+0x81453`, `+0x88072` and `+0x88425`, and `+0xe262` is the same thing unless that item's already selected, in which case it's the second step. Choosing puts down any item that's up, comes back from `+0xde1c` once it's down, and selects the new one with `+0xa1130`, which also tells the hud. Nothing's raised yet. That's `+0xd740`, using the selected item, from the item key at `+0xdb42` or `+0xe255`. It puts the gun away first, coming back from `+0xddf3`, then calls the item's `+0x3c`. `+0xd930` looks like choosing, but it's for weapons.
+
+The hooks look for the two names on both steps, and flip the light without letting the game go any further, so no item is raised, the gun doesn't move, and a light stays on through binoculars or anything else. Choosing a light still selects it, so the item key goes on flipping it, unless another item is up. Taking that out of your hands would strand it.
+
+`+0x16420` plays a sound for a menu, by its path. It takes the menu in `ecx`, but only reads `+0x80` of it to see if it's been made quiet, so an empty block will do. It doesn't check that the sound loaded, so the path has to exist. The switch uses the .44's misfire, as `click.ogg` is also what you hear cycling through your items.
 
 ## Vehicles
 
@@ -624,6 +817,12 @@ bodies, so it acts at hub height, not at the ground. Its lever is the hub's dept
 That's about 300 N·m in a turn at 0.9 g, against the 1180 N·m it takes to tip it on flat ground. Sideways on a slope it tips
 at the game's 46 degrees.
 
+The ATV's body is one of the scene's dynamic actors, whose methods are at `+0x1b1ad8`, and it holds ODE's body at `+0xb8`. Its `+0x60` and `+0x64` hand back ODE's velocity and spin, and `+0x84` sets the spin. ODE's body has its rotation at `+0xa8`, as three rows of four, just before its quaternion, and its joints as a list at `+0x14`, each node naming the body at the joint's other end at `+4` (`+0x10bb54`). So a wheel's first joint names the chassis. The chassis is a 300 kg box, 4 m by 0.5 m by 3 m, with the inertia that goes with that, facing down its z axis.
+
+It went over because nothing holds it in the air. A crest at speed throws it up, it keeps turning the way it was, and it lands on its nose or its back. The game's flag at `+0x118` only says the chassis touched something (`+0x99393`), so Longshot counts tyre contacts itself, front and back by which side of the chassis's centre they're on. With no wheel down the ATV falls at 2 g, so a bump throws it half as high. Its spin comes round in about 0.1 s to what would level it within 0.3 s, at up to 3 rad/s: nose along the way it's flying, at 0.6 of that and within 20 degrees, and level side to side. On one axle, the end that's up can't keep rising, and past 45 degrees of pitch it's turned back. On four wheels it goes where the ground takes it. The log says how many jumps lasted over a quarter second, the longest, and how often it was held on the ground.
+
+The view from behind a vehicle is `vehicle_visor`, whose methods are at `+0x19c5e8`. Each frame its `+0x3c` (`+0x15360`) finds where the vehicle is (`+0x15150`) and eases a point at its `+0x164` toward it, by 4 times the frame's seconds, and the view goes round that point at its distance. That leaves the view a quarter of a second behind: nearly 4 m at 55 km/h, so speeding up pulled the view well back. Longshot moves the point 0.9 of the way the vehicle went across the ground before each update, which leaves 40 cm at the top speed. Rising and falling are left to the game's easing, which is what smooths the bumps.
+
 Whether the game's tyres ever bounced can't be read from the code. A contact bounces if the product of its materials'
 first fields is over 0.0001, and the setup at `+0x51c2` appears to fill in only the friction beside that field. The log
 says so the first time a tyre is asked to bounce, and every 10 seconds or so how far the tyres sank.
@@ -633,6 +832,84 @@ off the ground 9% of the time instead of 22%. At 25 km/h that's 0.9% instead of 
 measurement of the game.
 
 The changes are all in `vehicle.cpp`, and the suspension needs a new ATV to take effect.
+
+## Freelook
+
+The camera on foot is the player's view (`hunt vf58` gives the player, and its `vf50` the view), holding a position at
+`+0x20`, a rotation at `+0x2c` and a frustum at `+0x48`, and `0xd0160` rebuilds the frustum from the other two.
+
+Writing to it before a frame does nothing, as the world draw has the camera catch up with the body first (`vf30`, called
+at `0x5dbe`, which is `0x12c00` on foot). That copies the body's position and rotation back over the view, adds bob and
+sway, and rebuilds the frustum. So freelook wraps that slot, and after it runs the head's yaw and pitch go on through
+the engine's own attitude class and the frustum is rebuilt.
+
+The turn stays on the view until the next time it catches up. A shot copies its place from the view (`+0xa74bf`) and the
+gun takes its rotation from the camera (`+0xabaf3`), so both go where you look. Nothing that moves or turns the body reads
+the view: walking and the look function (`+0x131a2`) start from the hunter's own rotation, so the head can't reach the
+body or build up over time.
+
+The mouse reaches it in `hook_impulse_value`, which gives the look impulses back as 0 while freelook has them. It works
+only with the foot view (`0x19c220`). Pitch stops at the game's own 70 degrees for wherever the view ends up.
+
+Tapping alt on its own opens the window's system menu, which freezes the game until the next key, so `WM_SYSCOMMAND`
+with `SC_KEYMENU` is dropped.
+
+## Tree stands
+
+The hunter's update sets what animals can smell and see with `0xb8f70`, called at `+0xbd5e`, and `0xb8f90` at `+0xbe41`.
+Sight already gets 0.25x on any ladder view, which covers tree stands, tripods and blinds alike. Hooking both calls to
+give 0 hides the player from both senses, and hearing, at `+0xbee5`, is left as it is.
+
+Tree stands are told from the rest by the view offset, at `+0x144` of the ladder view (`0x19c2e8`), read from `ladder_top`.
+Its default is 0, kept with its limits at `0x1a96b0`, and `treestand.sii` is the only script with a `ladder_top` that
+doesn't set one. The blind has 0.3, the tripod and ground blind 0.52, and ladders 0.5.
+
+All leaves come from one fragment program, `effect/hu4/dif_opac/arb2.fp`, so it's changed as it reaches
+`glProgramStringARB`. Its fog coordinate is the distance in metres. The change reads a value from `program.env[20]`,
+which only `stand_before_world` sets, so nothing changes unless the player is up a tree. The game's alpha test stays at
+0.2, so leaves thin out with alpha to coverage when anti-aliasing is on, or a fixed dither with `KIL` when it's off.
+If the driver refuses the changed program, the original goes in instead.
+
+## Calculator and range sheet
+
+Both are extra entries in `def/equipment.def`, added as the file loads, with the same fields as the map. Anything
+based on `eqitem_base` shows up in the loadout by its `category`, so the game needs nothing else to list them.
+
+The game's 28 items exactly fill the equipment grid in `ui/meq_items.esc`, 4 columns by 7 rows, and new ones go after
+them on a row it has no room to show. An eighth row fits with the same size cells once the heading, which is in the
+frame, moves up above it. The handler just adds every item to the list, so it needs no changes.
+
+They're `area_map` items (`/script/item/map.sii`), with the table of methods at `0x1a2690`. `+0x30` is given the
+definition as the item loads, which is where the `paper` key added to each is read, as the item doesn't keep it. `+0x58`
+is told about stages. It gets `(1, true)` once the raise animation ends, `(1, false)` as it starts lowering, and
+`(2, false)` as it leaves the lowered stage, which is where the map plays its sound. Stage 1 is what shows and hides
+the map's window, so for these two that part never reaches the game, and the overlay goes up instead. `+0x38` lowers
+any raised item, which is how right click puts one away.
+
+The overlay is drawn just before the swap, with everything of the game's state in `glPushAttrib` and the matrix stacks,
+so it needs no hook in the UI. Windows draws the text into a texture for each of three sizes. The mouse is taken at
+`GetDeviceData`, and only presses are held back, so a button the game saw go down still gets let go.
+
+Leaving a hunt doesn't lower what's in your hands, so `paper_draw` drops the overlay once there's no player.
+
+### Bullet flight
+
+The sheet uses the game's own solver, so it can't disagree with the game.
+
+| Offset | |
+| --- | --- |
+| `0xf5880` | Sets up a 0x30 byte solver: `+0x4` ballistic coefficient 0.5, `+0x8` muzzle speed 3000, `+0xc` weight 150, `+0x18` sight height 1.5 |
+| `0xf58d0` | Solves it: `(0, -1, target)`, where `target` is `{0, 0, yards}`. Up to 10 passes, and it gives up at once if muzzle speed is 60 or less |
+| `0xf58c0` | Clears up after |
+
+The answer is at `+0x10` in degrees, and 60x that is the MOA the game shows, which is what lets the sheet's zero be
+checked against the game's own message when sights are reset. The game calls this at `0xa6857`. Sight height stays at
+1.5 unless the gun has `zero_sights`, and then it's 0. Sights move in steps of 0.00833333 degrees, or 0.5 MOA, and stop
+at 10 degrees either way.
+
+Ammo files give `bc`, `muzzle` and `weight`. `9mm.sii` has a second `weight` commented out above the real one, which is
+why they're read a line at a time. A loadout is in the profile's `free_hunt` section as indexed `weapon` entries, each a
+gun's name, then `|` and its scope. Tournaments don't use that section.
 
 ## Eyelids
 
@@ -667,7 +944,9 @@ pop there. Longshot starts it from 80 instead of 10.
 `s` is `tan(40) / tan(fov / 2)`, which is meant to make scopes keep their detail, and it also drives animals, whose
 thresholds are 35 and 85 m. It reads the frustum's field of view, so widening that for wide screens shrinks every range:
 at 3440x1440 the full model stopped at 56 m instead of 100. Longshot replaces the function at `+0xd01d0` with one that
-uses the game's own field of view, and multiplies it by `lod_distance`.
+uses the game's own field of view, and multiplies it by `lod_distance`. Zooming in already scales the ranges by the magnification,
+so the two multiplied went too far: `lod_distance` 3 through 8x binoculars put full trees out to a kilometre, at over 5,000 draws
+against 1,500. Together they stop at 8, but never below the zoom alone or `lod_distance` alone.
 
 ## Terrain chunks
 

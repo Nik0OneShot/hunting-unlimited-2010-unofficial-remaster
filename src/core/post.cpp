@@ -35,6 +35,10 @@ constexpr unsigned kFramebufferBinding = 0x8CA6;
 constexpr unsigned kColorAttachment0 = 0x8CE0;
 constexpr unsigned kFramebufferComplete = 0x8CD5;
 constexpr unsigned kColorBufferBit = 0x4000;
+constexpr unsigned kDepthBufferBit = 0x0100;
+constexpr unsigned kDepthComponent = 0x1902;
+constexpr unsigned kDepthComponent24 = 0x81A6;
+constexpr unsigned kFloat = 0x1406;
 
 // Everything that could get in the way of a full-screen pass. glPopAttrib puts these back.
 constexpr unsigned kStatesOff[] = {
@@ -126,6 +130,35 @@ const char kFinalSource[] =
     "    gl_FragColor = vec4(c, 1.0);\n"
     "}\n";
 
+// A flashlight or lantern, as a pass over the finished picture. The depth of the world says how
+// far each pixel is, so this works on anything drawn, with no changes to the game's materials.
+// A beam is a cone from the middle of the view, and a lantern a ball around it.
+const char kLightSource[] =
+    "#version 120\n"
+    "uniform sampler2D scene;\n"
+    "uniform sampler2D depth;\n"
+    "uniform vec2 projection;\n"
+    "uniform vec2 view_scale;\n"
+    "uniform vec3 lift;\n"
+    "uniform float beam;\n"
+    "uniform float glow;\n"
+    "varying vec2 uv;\n"
+    "void main() {\n"
+    "    vec3 c = texture2D(scene, uv).rgb;\n"
+    "    float d = texture2D(depth, uv).r;\n"
+    "    vec3 light = vec3(0.0);\n"
+    "    if (d < 0.99999) {\n"
+    "        float away = projection.y / (d * 2.0 - 1.0 + projection.x);\n"
+    "        float angle = length((uv * 2.0 - 1.0) * view_scale);\n"
+    "        float reach = away * sqrt(1.0 + angle * angle);\n"
+    "        float cone = 1.0 - smoothstep(0.1, 0.42, angle);\n"
+    "        float thrown = 1.6 / (1.0 + reach * reach / 500.0) * (1.0 - smoothstep(60.0, 110.0, reach));\n"
+    "        float around = 1.8 / (1.0 + reach * reach / 36.0) * (1.0 - smoothstep(14.0, 26.0, reach));\n"
+    "        light = beam * cone * thrown * vec3(1.0, 1.0, 0.95) + glow * around * vec3(1.0, 0.86, 0.62);\n"
+    "    }\n"
+    "    gl_FragColor = vec4(c * (vec3(1.0) + (lift - vec3(1.0)) * min(light, vec3(1.0))), 1.0);\n"
+    "}\n";
+
 struct Gl {
     void(WINAPI* GenTextures)(int, unsigned*);
     void(WINAPI* BindTexture)(unsigned, unsigned);
@@ -147,6 +180,7 @@ struct Gl {
     void(WINAPI* DrawBuffer)(unsigned);
     void(WINAPI* ReadPixels)(int, int, int, int, unsigned, unsigned, void*);
     void(WINAPI* ClearColor)(float, float, float, float);
+    void(WINAPI* ClearDepth)(double);
     void(WINAPI* Clear)(unsigned);
     void(WINAPI* Scissor)(int, int, int, int);
     void(APIENTRY* ActiveTexture)(unsigned);
@@ -163,6 +197,7 @@ struct Gl {
     int(APIENTRY* GetUniformLocation)(unsigned, const char*);
     void(APIENTRY* Uniform1i)(int, int);
     void(APIENTRY* Uniform1f)(int, float);
+    void(APIENTRY* Uniform3f)(int, float, float, float);
     void(APIENTRY* Uniform2f)(int, float, float);
     void(APIENTRY* GenFramebuffers)(int, unsigned*);
     void(APIENTRY* BindFramebuffer)(unsigned, unsigned);
@@ -174,8 +209,11 @@ Gl g_gl;
 void* g_context = nullptr;
 bool g_ready = false;
 bool g_failed = false;
-unsigned g_bright = 0, g_blur = 0, g_final = 0;
-unsigned g_scene_texture = 0, g_bloom_textures[2] = {};
+unsigned g_bright = 0, g_blur = 0, g_final = 0, g_light = 0;
+unsigned g_scene_texture = 0, g_depth_texture = 0, g_bloom_textures[2] = {};
+bool g_have_depth = false;
+float g_view_scale[2] = {};
+float g_depth_a = 0.0f, g_depth_b = 0.0f;
 unsigned g_bloom_buffers[2] = {};
 int g_width = 0, g_height = 0;
 
@@ -221,6 +259,7 @@ bool load_functions() {
            load_core(&gl.DrawBuffer, opengl, "glDrawBuffer") &&
            load_core(&gl.ReadPixels, opengl, "glReadPixels") &&
            load_core(&gl.ClearColor, opengl, "glClearColor") &&
+           load_core(&gl.ClearDepth, opengl, "glClearDepth") &&
            load_core(&gl.Clear, opengl, "glClear") &&
            load_core(&gl.Scissor, opengl, "glScissor") &&
            load_extension(&gl.ActiveTexture, get, "glActiveTexture") &&
@@ -237,6 +276,7 @@ bool load_functions() {
            load_extension(&gl.GetUniformLocation, get, "glGetUniformLocation") &&
            load_extension(&gl.Uniform1i, get, "glUniform1i") &&
            load_extension(&gl.Uniform1f, get, "glUniform1f") &&
+           load_extension(&gl.Uniform3f, get, "glUniform3f") &&
            load_extension(&gl.Uniform2f, get, "glUniform2f") &&
            load_extension(&gl.GenFramebuffers, get, "glGenFramebuffers") &&
            load_extension(&gl.BindFramebuffer, get, "glBindFramebuffer") &&
@@ -279,6 +319,10 @@ void set_uniform(unsigned program, const char* name, float value) {
     g_gl.Uniform1f(g_gl.GetUniformLocation(program, name), value);
 }
 
+void set_uniform(unsigned program, const char* name, float x, float y, float z) {
+    g_gl.Uniform3f(g_gl.GetUniformLocation(program, name), x, y, z);
+}
+
 void set_uniform(unsigned program, const char* name, float x, float y) {
     g_gl.Uniform2f(g_gl.GetUniformLocation(program, name), x, y);
 }
@@ -295,10 +339,17 @@ void make_texture(unsigned texture, int width, int height) {
 bool make_targets(int width, int height) {
     if (!g_scene_texture) {
         g_gl.GenTextures(1, &g_scene_texture);
+        g_gl.GenTextures(1, &g_depth_texture);
         g_gl.GenTextures(2, g_bloom_textures);
         g_gl.GenFramebuffers(2, g_bloom_buffers);
     }
     make_texture(g_scene_texture, width, height);
+    g_gl.BindTexture(kTexture2d, g_depth_texture);
+    g_gl.TexParameteri(kTexture2d, kTextureMagFilter, kLinear);
+    g_gl.TexParameteri(kTexture2d, kTextureMinFilter, kLinear);
+    g_gl.TexParameteri(kTexture2d, kTextureWrapS, kClampToEdge);
+    g_gl.TexParameteri(kTexture2d, kTextureWrapT, kClampToEdge);
+    g_gl.TexImage2D(kTexture2d, 0, kDepthComponent24, width, height, 0, kDepthComponent, kFloat, nullptr);
     bool complete = true;
     for (int i = 0; i < 2; ++i) {
         make_texture(g_bloom_textures[i], width / kBloomScale, height / kBloomScale);
@@ -322,6 +373,8 @@ bool ready() {
         g_ready = false;
         g_failed = false;
         g_scene_texture = 0;
+        g_depth_texture = 0;
+        g_have_depth = false;
         g_width = g_height = 0;
     }
     if (g_ready) return true;
@@ -335,7 +388,8 @@ bool ready() {
     g_bright = link(kBrightSource);
     g_blur = link(kBlurSource);
     g_final = link(kFinalSource);
-    if (!g_bright || !g_blur || !g_final) return false;
+    g_light = link(kLightSource);
+    if (!g_bright || !g_blur || !g_final || !g_light) return false;
 
     g_failed = false;
     g_ready = true;
@@ -405,6 +459,47 @@ bool run_chain(int width, int height) {
 
 bool any_effect() { return g_cfg.sharpening > 0.0f || g_cfg.bloom > 0.0f || g_cfg.vibrance > 0.0f; }
 
+// Has to come straight after the world, as whatever's drawn next clears the depth.
+void copy_world_depth(int width, int height, const float* projection) {
+    g_gl.ActiveTexture(kTexture0);
+    g_gl.BindTexture(kTexture2d, g_depth_texture);
+    g_gl.ReadBuffer(kBack);
+    g_gl.CopyTexSubImage2D(kTexture2d, 0, 0, 0, 0, 0, width, height);
+    g_view_scale[0] = 1.0f / projection[0];
+    g_view_scale[1] = 1.0f / projection[5];
+    g_depth_a = projection[10];
+    g_depth_b = projection[11];
+    g_have_depth = true;
+}
+
+bool run_lights(int width, int height, const PostLight& light) {
+    if ((width != g_width || height != g_height) && !make_targets(width, height)) return false;
+    g_gl.BindFramebuffer(kFramebuffer, 0);
+    for (const unsigned state : kStatesOff) g_gl.Disable(state);
+    g_gl.DepthMask(0);
+    g_gl.ColorMask(1, 1, 1, 1);
+    g_gl.ReadBuffer(kBack);
+    g_gl.DrawBuffer(kBack);
+    g_gl.Viewport(0, 0, width, height);
+
+    g_gl.ActiveTexture(kTexture0 + 1);
+    g_gl.BindTexture(kTexture2d, g_depth_texture);
+    g_gl.ActiveTexture(kTexture0);
+    g_gl.BindTexture(kTexture2d, g_scene_texture);
+    g_gl.CopyTexSubImage2D(kTexture2d, 0, 0, 0, 0, 0, width, height);
+
+    g_gl.UseProgram(g_light);
+    set_uniform(g_light, "scene", 0);
+    set_uniform(g_light, "depth", 1);
+    set_uniform(g_light, "projection", g_depth_a, g_depth_b);
+    set_uniform(g_light, "view_scale", g_view_scale[0], g_view_scale[1]);
+    set_uniform(g_light, "lift", light.lift[0], light.lift[1], light.lift[2]);
+    set_uniform(g_light, "beam", light.beam);
+    set_uniform(g_light, "glow", light.glow);
+    draw_pass();
+    return true;
+}
+
 // ---- Self-test, on the real driver --------------------------------------------------------
 
 constexpr int kTestSize = 64;
@@ -470,6 +565,50 @@ int test_effects() {
     return 0;
 }
 
+void clear_depth_area(int x, int width, double depth) {
+    g_gl.Enable(0x0C11);  // scissor test
+    g_gl.Scissor(x, 0, width, kTestSize);
+    g_gl.DepthMask(1);
+    g_gl.ClearDepth(depth);
+    g_gl.Clear(kDepthBufferBit);
+    g_gl.Disable(0x0C11);
+}
+
+// Dim ground on the left and open sky on the right, seen by a light from the middle of the view.
+int test_lights() {
+    constexpr float kNear = 0.5f, kFar = 1000.0f;
+    const float depth_a = (kNear + kFar) / (kNear - kFar);
+    const float depth_b = 2.0f * kNear * kFar / (kNear - kFar);
+    const float camera[16] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, depth_a, depth_b, 0.0f, 0.0f, -1.0f, 0.0f};
+    const auto buffer_depth = [&](float away) { return ((depth_b / away - depth_a) + 1.0) * 0.5; };
+
+    constexpr int kOnGround = kTestSize / 2 - 3;
+    constexpr int kOnSky = kTestSize / 2 + 3;
+    constexpr int kFarSide = 3;
+    const auto lit = [&](int x, float away, float beam, float glow) {
+        if ((kTestSize != g_width) && !make_targets(kTestSize, kTestSize)) return Pixel{-1, -1, -1};
+        clear_area(0, kTestSize, 0.1f, 0.1f, 0.1f);
+        clear_depth_area(0, kTestSize / 2, buffer_depth(away));
+        clear_depth_area(kTestSize / 2, kTestSize / 2, 1.0);
+        copy_world_depth(kTestSize, kTestSize, camera);
+        const PostLight light = {beam, glow, {6.0f, 6.0f, 6.0f}};
+        run_lights(kTestSize, kTestSize, light);
+        return read_pixel(x, kTestSize / 2);
+    };
+
+    constexpr int kDim = 26;
+    if (lit(kOnGround, 5.0f, 0.0f, 0.0f).r > kDim + 2) return 20;        // switched off, nothing changes
+    if (lit(kOnGround, 5.0f, 1.0f, 0.0f).r < kDim * 3) return 21;         // a beam lights what's in front
+    if (lit(kOnSky, 5.0f, 1.0f, 0.0f).r > kDim + 2) return 22;            // but not the sky
+    if (lit(kOnGround, 500.0f, 1.0f, 0.0f).r > kDim + 2) return 23;       // or what's too far off
+    if (lit(kFarSide, 5.0f, 1.0f, 0.0f).r > lit(kOnGround, 5.0f, 1.0f, 0.0f).r - 20) return 24;  // and it's a cone
+    if (lit(kFarSide, 5.0f, 0.0f, 1.0f).r < kDim * 3) return 25;          // a lantern reaches the sides
+    if (lit(kFarSide, 40.0f, 0.0f, 1.0f).r > kDim + 2) return 26;         // and not far
+    const Pixel warm = lit(kOnGround, 5.0f, 0.0f, 1.0f);
+    if (warm.b >= warm.r) return 27;                                      // and it's warm
+    return 0;
+}
+
 // The game keeps track of its own state, so anything left changed here would break its drawing.
 int test_state_kept() {
     unsigned texture = 0;
@@ -508,13 +647,28 @@ int test_chain() {
     if (!ready()) return 1;
     g_gl.Viewport(0, 0, kTestSize, kTestSize);
     const int effects = test_effects();
-    return effects ? effects : test_state_kept();
+    if (effects) return effects;
+    const int lights = test_lights();
+    return lights ? lights : test_state_kept();
 }
 
 }  // namespace
 
+void post_capture_world(const float* projection) {
+    g_have_depth = false;
+    if (!lights_wanted() || !ready()) return;
+    if ((g_mode.width != g_width || g_mode.height != g_height) && !make_targets(g_mode.width, g_mode.height)) return;
+    ProfileTimer timer(ProfileSection::Post);
+    g_gl.PushAttrib(kAllAttribBits);
+    copy_world_depth(g_mode.width, g_mode.height, projection);
+    g_gl.PopAttrib();
+}
+
 void post_render() {
-    if (!any_effect() || !ready()) return;
+    PostLight light = {};
+    const bool lit = g_have_depth && lights_this_frame(&light);
+    g_have_depth = false;
+    if ((!any_effect() && !lit) || !ready()) return;
     ProfileTimer timer(ProfileSection::Post);
 
     int program = 0, framebuffer = 0;
@@ -522,7 +676,7 @@ void post_render() {
     g_gl.GetIntegerv(kFramebufferBinding, &framebuffer);
     g_gl.PushAttrib(kAllAttribBits);
 
-    const bool ok = run_chain(g_mode.width, g_mode.height);
+    const bool ok = (!any_effect() || run_chain(g_mode.width, g_mode.height)) && (!lit || run_lights(g_mode.width, g_mode.height, light));
 
     g_gl.UseProgram(program);
     g_gl.BindFramebuffer(kFramebuffer, framebuffer);

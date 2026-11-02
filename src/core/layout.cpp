@@ -33,6 +33,21 @@ constexpr int kMenuTintLayer = -12;
 
 // The player's own key bindings.
 constexpr char kControls[] = "home/controls.def";
+constexpr char kEquipment[] = "def/equipment.def";
+constexpr char kGameDefs[] = "def/game.def";
+constexpr char kBaseDefs[] = "def/basedefs.def";
+constexpr char kBirds[] = "/ambient_animals.sii";
+constexpr char kStickers[] = "def/sticker.def";
+constexpr char kBloodState[] = "effect/generic/dry/nc_xx_x_decal_mult.rs";
+constexpr char kDecals[] = "material/decal/";
+// The equipment grid has just enough room for the game's 28 items. Moving its heading above the
+// frame makes room for an eighth row, for the two items Longshot adds.
+constexpr char kGearGrid[] = "ui/meq_items.esc";
+constexpr char kGearListWas[] = "\"coords\" : \"31 76 330 600\"";
+constexpr char kGearList[] = "\"coords\" : \"31 70 330 664\"";
+constexpr char kGearHeadingWas[] = "\"coords\" : \"20 617 333 649\"";
+constexpr char kGearHeading[] = "\"coords\" : \"20 680 333 712\"";
+constexpr int kAnyRealm = 1;
 
 constexpr char kOptions[] = "ui/moptions.esc";
 
@@ -460,10 +475,21 @@ bool is_menu(const std::string& path) {
     return is_layout(path, "ui/m") || path == "ui/sload.esc";
 }
 
+bool is_birds(const std::string& path) {
+    const size_t length = sizeof(kBirds) - 1;
+    return path.size() > length && path.compare(path.size() - length, length, kBirds) == 0;
+}
+
+bool is_blood_material(const std::string& path) {
+    return path.rfind(kDecals, 0) == 0 && path.find("blood") != std::string::npos && path.size() > 4 &&
+           path.compare(path.size() - 4, 4, ".mat") == 0;
+}
+
 bool rewrites(const std::string& path) {
     return is_scope(path) || is_menu(path) || path == "ui/gbinoc.esc" || path == "ui/geyes.esc" ||
            path == "ui/gflash.esc" || path == "ui/ghud.esc" || path == "def/ui/txt.def" ||
-           path == kControls;
+           path == kControls || path == kEquipment || path == kGameDefs || path == kBaseDefs || is_birds(path) ||
+           path == kStickers || path == kBloodState || is_blood_material(path);
 }
 
 // F12 is where Steam takes screenshots, so the game's own shot belongs there too, rather than on
@@ -528,23 +554,53 @@ void** __cdecl hook_fs_open(void** out, const char* const* path, int realm) {
 
 }  // namespace
 
+bool layout_read_file(const char* path, std::string* text) {
+    if (!g_real_fs_open || !g_file_size || !g_file_read) return false;
+    void* file = nullptr;
+    g_real_fs_open(&file, &path, kAnyRealm);
+    if (!file) return false;
+    text->resize(static_cast<size_t>(g_file_size(file)));
+    const bool ok = text->empty() || g_file_read(file, &(*text)[0], static_cast<unsigned int>(text->size()));
+    close_file(file);
+    return ok;
+}
+
 std::string layout_rewrite(const char* path, const std::string& original, float aspect,
                            HudLayout hud) {
     const std::string name = normalised(path);
     if (name == kControls) return move_screenshot_key(original);
+    if (name == kEquipment) {
+        const std::string with_paper = paper_available() ? paper_add_items(original) : original;
+        if (lights_available()) return lights_add_items(with_paper);
+        return paper_available() ? with_paper : std::string();
+    }
+    if (name == kGameDefs) return wildlife_available() ? wildlife_species_text(original) : std::string();
+    if (name == kBaseDefs) return wildlife_available() ? wildlife_base_text(original) : std::string();
+    if (is_birds(name)) return wildlife_available() ? wildlife_birds_text(original) : std::string();
+    if (name == kStickers) return wildlife_available() ? wildlife_sticker_text(original) : std::string();
+    if (name == kBloodState) return wildlife_available() ? wildlife_blood_state_text(original) : std::string();
+    if (is_blood_material(name)) return wildlife_available() ? wildlife_blood_material_text(original) : std::string();
+
+    // Empty unless this is the equipment grid, and it's all that changes on a 4:3 screen.
+    std::string fitted;
+    if (name == kGearGrid && paper_available()) {
+        fitted = original;
+        replace_all(&fitted, kGearListWas, kGearList);
+        replace_all(&fitted, kGearHeadingWas, kGearHeading);
+    }
 
     const bool wide = aspect > kBaseAspect + 0.01f;
     const bool options = name == kOptions && settings_available();
-    if (!wide && !options) return std::string();
+    if (!wide && !options) return fitted;
     const Area area = area_for(aspect, hud);
 
     if (name == "def/ui/txt.def") {
-        std::string changed = fix_lid_template(original, area);
+        std::string changed = stash_add_label(fix_lid_template(original, area));
         return changed == original ? std::string() : changed;
     }
 
-    EscFile esc(original);
-    if (esc.count() == 0 || esc.entity(0).type != "ui.window") return std::string();
+    EscFile esc(fitted.empty() ? original : fitted);
+    if (esc.count() == 0 || esc.entity(0).type != "ui.window") return fitted;
     if (options) add_settings(esc);
     if (!wide) return esc.text();
 
@@ -556,9 +612,23 @@ std::string layout_rewrite(const char* path, const std::string& original, float 
     else if (is_menu(name) && original.find(kMenuBackground) != std::string::npos) {
         fix_menu(esc, original.find("top.mat") != std::string::npos, area);
     } else {
-        return std::string();
+        return fitted;
     }
     return esc.text();
+}
+
+void layout_attach_game(HMODULE game, bool verified) {
+    if (!verified || !g_real_fs_open) return;
+    void* ignored = nullptr;
+    const bool ok = iat_patch(game, "p3core.dll", kFsOpen, reinterpret_cast<void*>(&hook_fs_open), &ignored);
+    logf("layout: the game's own files %s", ok ? "can be rewritten" : "can't be rewritten");
+}
+
+void layout_attach_module(HMODULE module, const char* name) {
+    if (!g_real_fs_open || !module) return;
+    void* ignored = nullptr;
+    const bool ok = iat_patch(module, "p3core.dll", kFsOpen, reinterpret_cast<void*>(&hook_fs_open), &ignored);
+    logf("layout: %s's files %s", name, ok ? "can be rewritten" : "can't be rewritten");
 }
 
 void layout_install(HMODULE p3core, HMODULE p3shared) {
@@ -572,6 +642,9 @@ void layout_install(HMODULE p3core, HMODULE p3shared) {
     const bool ok = iat_patch(p3shared, "p3core.dll", kFsOpen, reinterpret_cast<void*>(&hook_fs_open),
                               reinterpret_cast<void**>(&g_real_fs_open));
     logf("layout: file hook %s", ok ? "installed" : "FAILED");
+    for (const wchar_t* name : {L"gfxshared.dll", L"loaders.dll"}) {
+        if (HMODULE module = GetModuleHandleW(name)) layout_attach_module(module, name == std::wstring(L"gfxshared.dll") ? "gfxshared.dll" : "loaders.dll");
+    }
 }
 
 }  // namespace longshot

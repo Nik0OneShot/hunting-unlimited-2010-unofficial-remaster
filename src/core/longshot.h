@@ -53,6 +53,11 @@ struct Config {
     bool weapon_queue = true;
     float action_speed = 1.0f;
     bool strong_atv = true;
+    int freelook_key = 0xA4;  // a Windows virtual key, left alt, and 0 for none
+    float freelook_yaw = 100.0f;
+    float freelook_pitch = 60.0f;
+    bool stand_hidden = true;
+    bool stand_clear_view = true;
     bool faster_walking = true;
     float walk_speed = 1.9f;
     float side_speed = 0.8f;
@@ -62,6 +67,9 @@ struct Config {
     bool free_hunt_animals = true;
     bool free_hunt_calm_animals = true;
     bool free_hunt_any_marker = true;
+    bool free_hunt_wildlife = true;
+    float free_hunt_day_minutes = 48.0f;  // how long a whole day takes, and 0 stops the clock
+    float free_hunt_night_light = 1.0f;
 };
 
 // The mode the game is asked to run in, resolved from the config and the desktop.
@@ -151,13 +159,21 @@ bool menu_row_fits(float top, float bottom, float shift, float rows_top, float r
 
 // layout.cpp
 void layout_install(HMODULE p3core, HMODULE p3shared);
+// The game opens some files itself, like a map's birds, rather than through p3shared.
+void layout_attach_game(HMODULE game, bool verified);
+// Materials and effects are opened by the graphics and loader modules, so they need the same hook.
+void layout_attach_module(HMODULE module, const char* name);
 // The text a layout file should have at this aspect, or empty to leave it as it is.
 std::string layout_rewrite(const char* path, const std::string& original, float aspect,
                            HudLayout hud);
+// A whole file from the game's own files, or false if there's no such file.
+bool layout_read_file(const char* path, std::string* text);
 
 // graphics.cpp
 void graphics_attach_gl(HMODULE gl);
 void* graphics_wrap_gl(const char* name, void* proc);
+// An OpenGL function by name, whether it's built into opengl32.dll or comes from the driver.
+void* graphics_gl_function(const char* name);
 // The sample count a window could get, or 0. Needs a window with no pixel format yet.
 int graphics_test_multisample(HDC dc, int samples);
 // Runs `work` with a throwaway OpenGL context current, on a hidden window `size` pixels square.
@@ -194,6 +210,9 @@ float walking_drift(float along, float across);
 // How much of the player's noise animals can hear, and how loud a footstep is, at a speed in m/s.
 float walking_noise(float speed);
 float walking_step_volume(float speed);
+// The player in the current hunt, or null, and which kind of view they're in.
+char* walking_player();
+const void* walking_view_class(char* player);
 // The kind of ground a footstep should sound like.
 unsigned walking_step_ground(unsigned ground);
 
@@ -205,12 +224,105 @@ void vehicle_contact(Contact* contact);
 // 0 if tyres are told from everything else, or which check failed.
 int vehicle_test();
 
+// What the flashlight and lantern want from post-processing this frame. `lift` is how much a pixel
+// in full light is multiplied by, for red, green and blue.
+struct PostLight {
+    float beam;
+    float glow;
+    float lift[3];
+};
+
+// stash.cpp
+void stash_attach_game(HMODULE game, bool verified);
+// The interact key's label for stashing, after the game's own.
+std::string stash_add_label(const std::string& text);
+// Finds the map's camps as it loads, from the path of its landscape.
+void stash_map_loading(const char* landscape);
+void stash_end_frame();
+// 0 if finding camps and the label behave, or which check failed.
+int stash_test();
+
+// lights.cpp
+void lights_attach_game(HMODULE game, bool verified);
+// False on an unknown build, where they couldn't be switched on.
+bool lights_available();
+// The game's equipment list with the two items added.
+std::string lights_add_items(const std::string& equipment);
+void lights_hunt_started();
+bool lights_wanted();
+bool lights_beam_on();
+bool lights_glow_on();
+bool lights_this_frame(PostLight* light);
+// 0 if the items and how far light lifts a picture behave, or which check failed.
+int lights_test();
+
+// daytime.cpp
+void daytime_attach_game(HMODULE game, bool verified);
+void daytime_hunt_started();
+void daytime_hunt_ended();
+void daytime_end_frame();
+void daytime_before_render();
+// The hour of the day, with its fraction, or below zero if the clock isn't running.
+float daytime_hour();
+// 0 by day and 1 at night, or 0 when the clock isn't running.
+float daytime_darkness();
+float daytime_light_level();
+// 0 if the clock and the moonlight behave, or which check failed.
+int daytime_test();
+
 // freehunt.cpp
 void free_hunt_attach_game(HMODULE game, bool verified);
+// Where the view is and which way it faces, or false outside a hunt.
+bool free_hunt_read_view(float* position, float* forward);
+// How deep the water is at a place, which is 0 on dry land, and how high the ground is there.
+// False with no hunt loaded.
+bool free_hunt_water_depth(const float* place, float* depth, float* ground = nullptr);
 void free_hunt_settings_changed();
 void free_hunt_end_frame();
+// In a free hunt, and not paused.
+bool free_hunt_running();
 // 0 if the choice of animal and place behaves, or which check failed.
 int free_hunt_test();
+
+// What wildlife changes about one animal's needs while it decides what to do, to put back afterwards.
+struct WildNeeds {
+    bool changed;
+    float hunger, thirst, tiredness, prey, hunter_fear, enemy_fear, lure, aggression;
+    float used_hunger, used_thirst, used_tiredness, used_prey, used_hunter_fear, used_enemy_fear, used_lure, used_aggression;
+    bool hid_hurt;
+};
+
+// wildlife.cpp
+void wildlife_attach_game(HMODULE game, bool verified);
+// False on an unknown build, or with the setting off.
+bool wildlife_available();
+// The game's files with Longshot's herds, carcasses and birds.
+std::string wildlife_species_text(const std::string& original);
+std::string wildlife_base_text(const std::string& original);
+// Bigger blood and prints, and more of them kept.
+std::string wildlife_sticker_text(const std::string& original);
+// Blood multiplied with the ground, rather than drawn over it unlit. Empty when there's nothing to change.
+std::string wildlife_blood_material_text(const std::string& original);
+std::string wildlife_blood_state_text(const std::string& original);
+std::string wildlife_birds_text(const std::string& original);
+// While set, the generator keeps a herd together rather than splitting it into groups.
+void wildlife_whole_herd(bool whole);
+// How big a herd of a species should arrive, and what to ask the generator for to get that.
+int wildlife_herd_size(const char* species, int short_of);
+int wildlife_herd_group(int size);
+bool wildlife_near_water(const float* place);
+// For a species that lives up high, moves a place to the best high ground near it, at least nearest
+// from the hunter. False, and the place as it was, for anything else.
+bool wildlife_high_ground(const char* species, const float* hunter, float nearest, float* place);
+// Spreads out big groups and adds young, before the animals are made.
+void wildlife_settle_herds(void* animals, char* definitions);
+void wildlife_hunt_started(int hour);
+void wildlife_hunt_ended();
+void wildlife_end_frame();
+void wildlife_before_needs(char* brain, WildNeeds* needs);
+void wildlife_after_needs(char* brain, const WildNeeds& needs);
+// 0 if the numbers, the text changes and the timing behave, or which check failed.
+int wildlife_test();
 
 // terrain.cpp
 void terrain_attach_game(HMODULE game, bool verified);
@@ -218,6 +330,45 @@ void terrain_attach_game(HMODULE game, bool verified);
 void terrain_report();
 // 0 if the chunks let go of to make room are the right ones, or which check failed.
 int terrain_test();
+
+// freelook.cpp
+void freelook_attach_game(HMODULE game, bool verified);
+// While the key is held on foot, the mouse turns the head and not the body.
+bool freelook_takes_mouse();
+// Walking, rather than driving or up a stand.
+bool freelook_on_foot();
+void freelook_turn(bool sideways, float radians);
+void freelook_before_render();
+// Throws the view along a direction on the ground, by how much the push was from behind and from
+// the side, and lets it spring back. Strength is 0 to 1.
+void freelook_shove(const float* push, float back, float side, float strength);
+// 0 if the head stops where it should and comes back, or which check failed.
+int freelook_test();
+
+// stand.cpp
+void stand_attach_game(HMODULE game, bool verified);
+void stand_before_world();
+void stand_after_world();
+void* stand_wrap_gl(const char* name, void* proc);
+// The game's leaf program with near leaves thinned out, or empty for any other program.
+std::string stand_leaf_program(const std::string& program);
+// 0 if the leaf program changes as it should and the driver takes it, or which check failed.
+int stand_test();
+
+// paper.cpp
+void paper_attach_game(HMODULE game, bool verified);
+// False on an unknown build, where the two items would only be more maps.
+bool paper_available();
+// While the calculator or range sheet is up, the mouse works it and not the view.
+bool paper_takes_mouse();
+void paper_mouse_moved(long dx, long dy);
+void paper_mouse_down(int button);
+// Draws over the finished frame, just before it's shown.
+void paper_draw();
+// The game's equipment list with the two items added.
+std::string paper_add_items(const std::string& equipment);
+// 0 if the sums, the reading of ammo files and the drawing behave, or which check failed.
+int paper_test();
 
 // occlusion.cpp
 void occlusion_attach_game(HMODULE game, bool verified);
@@ -236,6 +387,8 @@ float detail_grass_radius(float visible);
 // post.cpp
 // Runs after the world is drawn and before the UI, so it never touches the HUD or menus.
 void post_render();
+// Keeps the depth of the world that's just been drawn, as the weapon clears it, while a light is on.
+void post_capture_world(const float* projection);
 // 0 if the effects work on this PC's driver, or which check failed.
 int post_test();
 

@@ -52,6 +52,7 @@ constexpr DWORD kOfsZ = 8;
 constexpr DWORD kOfsButton0 = 12;
 // di8.dll drops every mouse button after the third, though the engine defines mouse4+.
 constexpr int kDi8ButtonCount = 3;
+constexpr int kPaperButtons = 2;
 
 constexpr float kDegToRad = 3.14159265f / 180.0f;
 // Radians per second for a full look input, from the look function.
@@ -315,6 +316,10 @@ class MouseDevice final : public IDirectInputDevice8A {
             ++used;
         };
 
+        if (focused && paper_takes_mouse()) {
+            paper_mouse_moved(dx, dy);
+            dx = dy = wheel = 0;
+        }
         if (focused) {
             if (dx) push(kOfsX, static_cast<DWORD>(dx));
             if (dy) push(kOfsY, static_cast<DWORD>(dy));
@@ -325,7 +330,10 @@ class MouseDevice final : public IDirectInputDevice8A {
         ButtonEdge edge;
         while (used < capacity && g_raw.take_button(&edge)) {
             if (!focused) continue;
-            if (edge.index < kDi8ButtonCount) {
+            // Only presses, so that one the game saw before the paper came up still gets let go.
+            if (edge.down && edge.index < kPaperButtons && paper_takes_mouse()) {
+                paper_mouse_down(edge.index);
+            } else if (edge.index < kDi8ButtonCount) {
                 push(kOfsButton0 + edge.index, edge.down ? 0x80 : 0);
             } else if (g_inp_event) {
                 InpEvent event{};
@@ -531,6 +539,8 @@ float look_scale(bool horizontal) {
     return scale * zoom_scale();
 }
 
+bool in_foot_look(uintptr_t offset) { return offset >= kLookFunctions[0].begin && offset < kLookFunctions[0].end; }
+
 bool in_look_function(uintptr_t offset) {
     for (const CodeRange& range : kLookFunctions) {
         if (offset >= range.begin && offset < range.end) return true;
@@ -545,7 +555,13 @@ float __cdecl hook_impulse_value(int id) {
     const auto offset =
         reinterpret_cast<uintptr_t>(_ReturnAddress()) - reinterpret_cast<uintptr_t>(g_game);
     if (!in_look_function(offset)) return value;
-    return value * look_scale(id <= kImpulseMouseRight);
+    const bool sideways = id <= kImpulseMouseRight;
+    const float scaled = value * look_scale(sideways);
+    if (!in_foot_look(offset) || !freelook_takes_mouse()) return scaled;
+    // What the look function would have done with it, so the head turns as fast as the body.
+    const float turn = scaled * read_aim_scale() * kLookRate * static_cast<float>(g_last_delta());
+    freelook_turn(sideways, id == kImpulseMouseLeft || id == kImpulseMouseDown - 1 ? turn : -turn);
+    return 0.0f;
 }
 
 }  // namespace

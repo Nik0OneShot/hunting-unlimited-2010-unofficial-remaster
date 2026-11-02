@@ -57,6 +57,8 @@ void on_module_loaded(HMODULE mod, const char* path) {
     } else if (!_stricmp(name, "ds8.dll") && !g_ds8_done) {
         g_ds8_done = true;
         sound_attach_ds8(mod, check_build(mod, kDs8));
+    } else if (!_stricmp(name, "gfxshared.dll") || !_stricmp(name, "loaders.dll")) {
+        layout_attach_module(mod, name);
     } else if (!_stricmp(name, "game.dll") && !g_game_done) {
         g_game_done = true;
         const bool verified = check_build(mod, kGame);
@@ -64,6 +66,14 @@ void on_module_loaded(HMODULE mod, const char* path) {
         menu_attach_game(mod, verified);
         view_attach_game(mod, verified);
         detail_attach_game(mod, verified);
+        freelook_attach_game(mod, verified);
+        stand_attach_game(mod, verified);
+        paper_attach_game(mod, verified);
+        wildlife_attach_game(mod, verified);
+        daytime_attach_game(mod, verified);
+        lights_attach_game(mod, verified);
+        stash_attach_game(mod, verified);
+        layout_attach_game(mod, verified);
         terrain_attach_game(mod, verified);
         occlusion_attach_game(mod, verified);
         weapons_attach_game(mod, verified);
@@ -233,6 +243,15 @@ extern "C" __declspec(dllexport) int __cdecl longshot_test_free_hunt() { return 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_terrain() { return terrain_test(); }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_occlusion() { return occlusion_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_freelook() { return freelook_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_stand() { return stand_test(); }
+extern "C" __declspec(dllexport) int __cdecl longshot_test_paper() { return paper_test(); }
+extern "C" __declspec(dllexport) int __cdecl longshot_test_wildlife() { return wildlife_test(); }
+extern "C" __declspec(dllexport) int __cdecl longshot_test_daytime() { return daytime_test(); }
+extern "C" __declspec(dllexport) int __cdecl longshot_test_lights() { return lights_test(); }
+extern "C" __declspec(dllexport) int __cdecl longshot_test_stash() { return stash_test(); }
 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_noise(float speed) { return walking_noise(speed); }
 

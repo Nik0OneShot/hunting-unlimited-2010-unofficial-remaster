@@ -17,6 +17,10 @@ Still to confirm with longer play:
 - whether the crashes and hitching seen on the original return
 - whether terrain, grass or tree culling needs the wider FOV too
 
+Gameplay additions so far: walking, ironsights, weapon handling, ATV handling, free hunt, freelook, a calculator and
+range sheet for the loadout, tree stands that hide you and keep leaves out of your view, living wildlife, a day and
+night cycle with lights for the dark, blood trails and tracks, and stashing bagged animals at camps.
+
 ## 2. Full player settings
 
 Done:
@@ -37,6 +41,13 @@ Done:
 - A free hunt with a ready-made start, no opening shot, and new animals arriving
 - Free hunt animals that start far away and only run from what they notice
 - A free hunt marker that can go almost anywhere, but never in water
+- Freelook on a key, with shots going where you look
+- A range sheet and calculator for the loadout, and tree stands that hide you
+- A full day and night cycle in free hunts, with a flashlight and lantern for the dark
+- Animals that keep to the clock, sleep, call, run at their real speeds and only react to what they notice
+- Blood trails and tracks you can follow, which predators follow too
+- Stashing bagged animals at camps in free hunts, so a hunt never has to end for full tags
+- An ATV that lands on its wheels, with a view that keeps up at speed
 
 ## 3. Performance and stability
 

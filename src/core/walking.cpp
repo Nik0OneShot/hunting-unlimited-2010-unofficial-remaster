@@ -20,6 +20,7 @@ constexpr uintptr_t kSetHearingCall = 0xbee5;
 constexpr uintptr_t kSetHearing = 0xb8fb0;
 constexpr uintptr_t kCurrentHunt = 0x4f50;
 constexpr uintptr_t kHuntPlayer = 0x2b30;
+constexpr uintptr_t kHunterTable = 0x19bb70;
 constexpr uintptr_t kPlayerRunning = 0xba50;
 constexpr uintptr_t kVehicleVisorClass = 0x19c5c8;
 
@@ -173,19 +174,25 @@ float along_curve(const Point* points, int count, float speed) {
     return points[count - 1].value;
 }
 
+// The world behind the menus keeps something of its own in the player's place, which isn't a hunter.
 char* current_player() {
     char* hunt = reinterpret_cast<CurrentHuntFn>(g_game + kCurrentHunt)();
-    return hunt ? reinterpret_cast<HuntPlayerFn>(g_game + kHuntPlayer)(hunt, nullptr) : nullptr;
+    char* player = hunt ? reinterpret_cast<HuntPlayerFn>(g_game + kHuntPlayer)(hunt, nullptr) : nullptr;
+    return player && *reinterpret_cast<char**>(player) == g_game + kHunterTable ? player : nullptr;
+}
+
+const void* view_class(char* player) {
+    void* visor = *reinterpret_cast<void**>(player + kPlayerVisor);
+    if (!visor) return nullptr;
+    void** methods = *reinterpret_cast<void***>(visor);
+    return reinterpret_cast<VisorClassFn>(methods[kVisorClassMethod / sizeof(void*)])(visor, nullptr);
 }
 
 // The speed the game is asking for on foot, in m/s, or below zero when that doesn't apply.
 float foot_speed(char* player) {
     if (!player) return -1.0f;
-    void* visor = *reinterpret_cast<void**>(player + kPlayerVisor);
-    if (!visor) return -1.0f;
-    void** methods = *reinterpret_cast<void***>(visor);
-    const auto visor_class = reinterpret_cast<VisorClassFn>(methods[kVisorClassMethod / sizeof(void*)]);
-    if (visor_class(visor, nullptr) == g_game + kVehicleVisorClass) return -1.0f;
+    const void* visor_class = view_class(player);
+    if (!visor_class || visor_class == g_game + kVehicleVisorClass) return -1.0f;
 
     const int stance = *reinterpret_cast<int*>(player + kPlayerStance);
     const int moving = *reinterpret_cast<int*>(player + kPlayerMoving);
@@ -232,6 +239,10 @@ float walking_noise(float speed) {
 float walking_step_volume(float speed) {
     return along_curve(kStepVolume, sizeof(kStepVolume) / sizeof(kStepVolume[0]), speed);
 }
+
+char* walking_player() { return g_game ? current_player() : nullptr; }
+
+const void* walking_view_class(char* player) { return view_class(player); }
 
 // A step on ground with no sound plays nothing at all, so it borrows the last one that had any.
 unsigned walking_step_ground(unsigned ground) {
