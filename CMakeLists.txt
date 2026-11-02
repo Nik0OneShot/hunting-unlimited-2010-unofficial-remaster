@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(longshot VERSION 0.1.2 LANGUAGES CXX)
+project(longshot VERSION 0.1.3 LANGUAGES CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "The game is 32-bit, so Longshot must be too. Configure with: cmake -A Win32")
@@ -27,16 +27,19 @@ add_library(longshot_core SHARED
     src/core/crash.cpp
     src/core/detail.cpp
     src/core/display.cpp
+    src/core/freehunt.cpp
     src/core/graphics.cpp
     src/core/input.cpp
     src/core/layout.cpp
     src/core/log.cpp
     src/core/menu.cpp
+    src/core/occlusion.cpp
     src/core/patch.cpp
     src/core/post.cpp
     src/core/profile.cpp
     src/core/settings.cpp
     src/core/sound.cpp
+    src/core/terrain.cpp
     src/core/timing.cpp
     src/core/vehicle.cpp
     src/core/view.cpp

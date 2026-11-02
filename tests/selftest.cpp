@@ -318,6 +318,12 @@ int main() {
     auto test_post = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_post"));
     auto test_weapons = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_weapons"));
     auto test_vehicle = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_vehicle"));
+    auto test_free_hunt = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_free_hunt"));
+    auto test_terrain = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_terrain"));
+    auto test_occlusion = reinterpret_cast<int(__cdecl*)()>(GetProcAddress(core, "longshot_test_occlusion"));
+    auto test_noise = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_noise"));
+    auto test_step = reinterpret_cast<float(__cdecl*)(float)>(GetProcAddress(core, "longshot_test_step"));
+    auto test_ground = reinterpret_cast<unsigned(__cdecl*)(unsigned)>(GetProcAddress(core, "longshot_test_ground"));
     auto test_drift = reinterpret_cast<float(__cdecl*)(float, float)>(GetProcAddress(core, "longshot_test_drift"));
     auto test_detail =
         reinterpret_cast<float(__cdecl*)(float, float, float)>(GetProcAddress(core, "longshot_test_detail"));
@@ -327,7 +333,7 @@ int main() {
                          test_zoom && test_wheel && test_glide && test_glide_add && test_layout &&
                          test_pause && test_turn && test_row_fits && test_slow &&
                          test_multisample && test_post && test_detail && test_grass && test_glare && test_weapons && test_vehicle &&
-                         test_drift;
+                         test_free_hunt && test_terrain && test_occlusion && test_noise && test_step && test_ground && test_drift;
     check("test exports present", exports);
     if (!exports) {
         fclose(g_out);
@@ -411,6 +417,27 @@ int main() {
     check("only the ATV's tyres get softened", vehicle == 0);
     check("walking straight reads as no drift", about(test_drift(3.0f, 0.0f), 0.0f));
     check("drifting to one side reads as left", test_drift(3.0f, -0.3f) < -5.0f);
+    const int free_hunt = test_free_hunt();
+    fprintf(g_out, "INFO  free hunt check result: %d\n", free_hunt);
+    check("free hunt picks the right animals and places", free_hunt == 0);
+    const int terrain = test_terrain();
+    fprintf(g_out, "INFO  terrain check result: %d\n", terrain);
+    check("terrain lets go of the oldest chunks, and only to make room", terrain == 0);
+    const int occlusion = test_occlusion();
+    fprintf(g_out, "INFO  occlusion check result: %d\n", occlusion);
+    check("the ground hides what's behind it, and nothing else", occlusion == 0);
+    check("standing still makes no noise", about(test_noise(0.0f), 0.0f));
+    check("walking keeps the game's noise", about(test_noise(1.9f), 0.7f));
+    check("running is as loud as it gets", about(test_noise(4.5f), 1.0f) && about(test_noise(9.0f), 1.0f));
+    check("noise rises with speed", test_noise(0.4f) < test_noise(1.0f) && test_noise(1.0f) < test_noise(1.9f));
+    check("a crouch sounds like the game's", about(test_step(1.0f), 0.5f));
+    check("a walk sounds like the game's", about(test_step(1.9f), 0.8f));
+    check("running sounds louder than walking", test_step(4.5f) > test_step(1.9f));
+    check("creeping sounds quieter than crouching", test_step(0.4f) < test_step(1.0f));
+    check("a first step on silent ground sounds like grass", test_ground(0) == 5);
+    check("ground with footsteps keeps its own", test_ground(9) == 9);
+    check("silent ground borrows the last sound", test_ground(0) == 9 && test_ground(6) == 9);
+    check("a kind of ground nobody knows borrows it too", test_ground(200) == 9);
 
     const int post = test_post();
     fprintf(g_out, "INFO  post-processing check result: %d\n", post);

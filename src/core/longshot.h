@@ -31,6 +31,7 @@ struct Config {
     int texture_filtering = 0;
     float grass_distance = 0.0f;
     float lod_distance = 1.0f;
+    bool occlusion_culling = true;
     float sharpening = 0.0f;
     float vibrance = 0.0f;
     float bloom = 0.0f;
@@ -52,6 +53,15 @@ struct Config {
     bool weapon_queue = true;
     float action_speed = 1.0f;
     bool strong_atv = true;
+    bool faster_walking = true;
+    float walk_speed = 1.9f;
+    float side_speed = 0.8f;
+    bool speed_noise = true;
+    bool irons_view_sway = true;
+    bool free_hunt_opening = false;
+    bool free_hunt_animals = true;
+    bool free_hunt_calm_animals = true;
+    bool free_hunt_any_marker = true;
 };
 
 // The mode the game is asked to run in, resolved from the config and the desktop.
@@ -103,8 +113,9 @@ double now_seconds();
 
 // profile.cpp
 // Sections are timed separately, so a slow frame in the log says where its time went. Files,
-// Uploads and Post happen inside the others, and are counted on their own as well.
-enum class ProfileSection { Sim, World, Ui, Swap, Sound, Files, Uploads, Post, Count };
+// Uploads, Post, Grass, Terrain, Decode, Queues and Occlusion happen inside the others, and are
+// counted on their own as well.
+enum class ProfileSection { Sim, World, Ui, Swap, Sound, Files, Uploads, Post, Grass, Terrain, Decode, Queues, Occlusion, Count };
 
 class ProfileTimer {
    public:
@@ -124,6 +135,9 @@ void profile_ui_begin();
 void profile_ui_end();
 bool profile_is_slow(float frame_ms, float typical_ms);
 void profile_frame_done(float frame_ms, float typical_ms, bool focused);
+void profile_grass_block(double seconds);
+// How long a section has taken so far this frame.
+double profile_frame_seconds(ProfileSection section);
 void profile_report_window();
 
 // menu.cpp
@@ -154,6 +168,7 @@ void weapons_attach_game(HMODULE game, bool verified);
 // Needs the game's input functions to be bound, so it comes after ui_init.
 void weapons_game_ready();
 void weapons_end_frame();
+void weapons_settings_changed();
 // 0 if the input queue behaves, or which check failed.
 int weapons_test();
 
@@ -173,8 +188,14 @@ static_assert(sizeof(Contact) == 0x70, "the game's contacts are 0x70 bytes");
 
 // walking.cpp
 void walking_attach_game(HMODULE game, bool verified);
+void walking_settings_changed();
 // How far off course a walk went, in degrees, with left as negative.
 float walking_drift(float along, float across);
+// How much of the player's noise animals can hear, and how loud a footstep is, at a speed in m/s.
+float walking_noise(float speed);
+float walking_step_volume(float speed);
+// The kind of ground a footstep should sound like.
+unsigned walking_step_ground(unsigned ground);
 
 // vehicle.cpp
 void vehicle_attach_game(HMODULE game, bool verified);
@@ -183,6 +204,27 @@ void vehicle_settings_changed();
 void vehicle_contact(Contact* contact);
 // 0 if tyres are told from everything else, or which check failed.
 int vehicle_test();
+
+// freehunt.cpp
+void free_hunt_attach_game(HMODULE game, bool verified);
+void free_hunt_settings_changed();
+void free_hunt_end_frame();
+// 0 if the choice of animal and place behaves, or which check failed.
+int free_hunt_test();
+
+// terrain.cpp
+void terrain_attach_game(HMODULE game, bool verified);
+// Logs how much terrain had to be loaded since the last report, if any did.
+void terrain_report();
+// 0 if the chunks let go of to make room are the right ones, or which check failed.
+int terrain_test();
+
+// occlusion.cpp
+void occlusion_attach_game(HMODULE game, bool verified);
+// Logs how much was hidden since the last report, if anything was looked at.
+void occlusion_report();
+// 0 if the terrain hides what it should and nothing else, or which check failed.
+int occlusion_test();
 
 // detail.cpp
 void detail_attach_game(HMODULE game, bool verified);
@@ -219,6 +261,8 @@ void display_settings_changed();
 
 // view.cpp
 void view_attach_game(HMODULE game, bool verified);
+// A hunt is on screen and the world is moving.
+bool view_hunt_running();
 // The field of view the game asked for, before Longshot widens it, or 0 for any other frustum.
 float view_game_fov(const void* frustum);
 void view_per_frame();

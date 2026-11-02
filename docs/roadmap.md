@@ -31,7 +31,12 @@ Done:
 - Eyelids that only close near the sun
 - Walking straight
 - Weapons and equipment that queue presses, with optional faster actions
-- A stronger ATV, on softer suspension
+- A stronger ATV, on softer suspension, with real brakes and steering that suits its speed
+- Ironsights where shots go to the sights
+- Faster walking, with noise that follows your speed
+- A free hunt with a ready-made start, no opening shot, and new animals arriving
+- Free hunt animals that start far away and only run from what they notice
+- A free hunt marker that can go almost anywhere, but never in water
 
 ## 3. Performance and stability
 
@@ -39,6 +44,10 @@ The logs now split every frame into its parts, list each slow frame, and report 
 first test PC that showed almost nothing to fix: an 11 minute hunt held 165 FPS, with about 2.5 ms of
 work a frame, and every slow frame had a known cause, like a screenshot or loading a map. See
 [engine-notes.md](engine-notes.md).
+
+One thing that did turn up, once hunts had more animals spread further out, was terrain data being rebuilt
+every frame. It now stays loaded, and can't run out of room. Terrain and trees hidden by the ground are also
+skipped now, which the game never did.
 
 So the rest waits for logs from other PCs, since those will show what's worth doing:
 

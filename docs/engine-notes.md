@@ -435,6 +435,24 @@ Animation time only moves when `+0x15a8c0` is called with some seconds, and soun
 scaling those seconds speeds up an action cleanly. It's applied to raising, lowering and aiming, at the three calls that
 step a held weapon or item. Items that hold for their own length, like calls, are left alone.
 
+## Ironsights
+
+A weapon's sway comes from three slow waves at `+0xa6260`. Sized by stance, they're ±0.15 and ±0.02 at rest, and any shot or
+change of stance raises them to ±0.4 and ±0.7, which fade back over 8 seconds. There are two ways they get used, and which
+one depends on `+0x2b4`, set while the gun model is drawn.
+
+Through a scope the model is hidden, and `+0xa68c0` turns the camera by three times the sway. The camera's place is what a shot
+reads, so the shot goes wherever the view is. That's why scopes feel fair.
+
+In ironsights, `+0xa6150` gives 1.5 times the sway as an angle, which is added to the shot and turns the model. It's the same angle
+for both, but it doesn't look the same: the model turns about its own centre and is drawn with its own field of view, so the
+sights move a different amount on screen. Right after a shot that's up to about 1 degree, or 1.75 m at 100 m. The model also
+trails a turn by up to 0.12, which the shot ignores.
+
+Longshot zeroes that offset for rifles in ironsights, at the shot's call and the model's, and lets the camera's sway through at
+half size, so it stays as large as the gun's was. The gun and the shot both hang off the camera, so they stay together. The lag
+limit goes to 0 while the setting is on. Bows have their own view method and are left alone.
+
 ## Walking
 
 Forward is built from the view with no bias, the head bob stays in the camera, and physics runs at a fixed 40 Hz. But
@@ -447,6 +465,83 @@ Longshot hooks the one `dJointCreateContact` call at `+0x12765d`, and for the pl
 to the direction of the walk, which lines the box up with it. In the game that left a typical drift of 1 degree over 3 m,
 across 57 straight stretches. It logs that drift, with the heading, and whether the correction is on.
 
+## Speed and noise
+
+Speed on foot is picked at `+0x13501`: 1.6 m/s, or 4.5 running, times the stance (1, 0.5, 0.2) times the direction, from a table at
+`+0x19c20c`, with half speed backwards and sideways. Forward wins if a sideways key is held too. Longshot changes the walking
+speed in place and the three shares in the table, which nothing else reads. Steps land from the head bob, at a rate in the table at
+`+0x19c1e8`, so forward and backward are raised by the square root of the change in speed, since a stride gets longer too.
+
+Footstep volume is fixed at `+0xcd65`: 0.5 crouched and 0.8 otherwise, so running sounds like walking.
+
+Each animal adds up three senses at `+0xb59c0`. Sight is a cone scaled by daylight and how exposed the hunter is. Smell reaches
+300 m, downwind only, scaled by cover scent. Hearing reaches 250 m and fades with distance, and the hunter's half of it is set at
+`+0xbee5`: 0.7 standing, 0.3 crouched or 0.2 prone, doubled when running, and 0 when still. So it already existed, but as steps.
+
+A step is silent if its kind of ground has no sound in `player.def`, which goes for invis, thin, paper, brush, metal and cactus. The search for what's
+under the player at `+0xd42e0` starts from 0, invis, and only changes it if it finds a terrain triangle there, so that also covers anything else underfoot.
+Longshot gives those steps the last kind of ground that had a sound, or grass if there hasn't been one.
+
+With `speed_noise`, Longshot works out the speed the game is asking for and gives both the footstep and the hearing a value from
+a curve through the game's own numbers. The ATV and horse keep the game's value, which is checked by the class of the view.
+
+## Free hunt
+
+The menu writes a whole mission to `tmp_mission.def` and loads it like any other. A new profile's `free_hunt` section comes from a
+list of name and value pairs at `+0x1e2020`, read at `+0xd0bef`. Longshot points that at its own copy, so existing profiles are
+never touched. `last_map` is the area's place in the list, plus one, and 0 means the first visit, which picks its own loadout and
+sets Alaska. Setting it skips that.
+
+Animal slots hold a species' place in `game.def`, not in the area's list. Density is 0 off, 1 low, 2 medium or 3 high, which picks
+from `freehunt_counts`, 2, 3 or 5 animals. The game's limit is 40 at once in the generator.
+
+**The map marker** sits on the area's start points, 65 to 173 of them about 200 to 300 m apart in `landscape.start.sii`. The menu keeps them in a list
+at `+0xc0` in its handler, with 0x28 bytes for each, and picks the nearest to a click. After reading the list it numbers every entry and works out
+where it sits on the map, in one loop, so anything added to the list first is treated the same as the rest. Longshot hooks the read at `+0x25efe`,
+and adds a spot every 20 m within 220 m of a start point. They go after the start points, so numbers saved in a profile still mean the same place.
+The menu reads nothing else from the list, and the map editor's own read isn't touched.
+
+A spot takes the height of the nearest start point, which doesn't matter: the opening at `+0x3630` drops the hunter to the ground, and that search
+tries higher and further five times. The world isn't loaded in the menu, so water has to wait until then. `+0xd4540` fills in what's under a place,
+with the water's surface first, its depth second and the ground third. The player calls it every frame. Longshot checks the marker with it just
+before the opening runs, and if it's over 0.3 m deep it looks outward in rings, 12 places every 15 m up to 450 m, for the first dry spot.
+
+**The opening shot** is `+0x3630`, which only runs when the mode at `+0x24` is 1, the free hunt. It points a camera at the nearest
+animal within 700 m and writes "About %d yards north from you...". It's skipped by turning the check into a jump.
+
+**Dangerous animals** has a bug in the game. The menu only writes the setting into the hunt when the box is clicked, so a box that was
+already ticked when the menu opened does nothing. Longshot reads the saved value instead, at `+0x94f31`.
+
+**Animals** are all made at load, and none ever arrive later. The generator at `+0xbe4b0` writes herds into a definition pool, at
+start points from 175 m out, and `+0xbd600` turns those into animals. Longshot reuses both while a hunt runs, about every minute at
+most, on the main thread at the start of the UI:
+
+1. Count living animals within 1000 m by species, against how many the hunt started with. A dead one has `+0xbe7` set.
+2. Take the species furthest short, and a start point 500 to 1000 m out, away from the view if there is one.
+3. Run the generator for one herd, so sizes, antlers and moods are natural. The name format at `+0xbe874` gets an `sp12_` prefix first,
+   because herd mates find each other by name and each run starts from 00 again.
+4. Move the herd to that point, keeping its spacing, and do what `+0xbd600` does for each animal. That function can't be called
+   itself, as its second pass pairs the list with every animal from the first. An animal's clock at `+0x754` starts at 0, which only
+   suits a hunt that's loading, so it's set to the time now. Otherwise its first update would count the whole hunt as one step.
+
+It stops at 60 alive or 120 listed. If anything faults, it stops for the rest of the run rather than risk the hunt.
+
+`game.def` is only held while a herd is made. A resource still held when the game quits stops its memory manager from shutting down, with
+"[mem] Number of safe iterations exceeded", and the game crashes on the way out.
+
+**Distance.** The generator skips start points within 175 m of the hunter, and calls those within 1000 m near. It gives the first herd the near point
+closest to the hunter, on purpose, which is who the opening shot shows, and the rest random near points. Animals smell up to 300 m and hear up to 250 m,
+so a herd at 175 m can sense the hunter the moment a hunt starts. Longshot moves the 175 at `+0xbe436` to 450 m. Simulated on the Northern Rockies' start points,
+that leaves the nearest animals a median 465 m away, about 4 minutes on foot, with about 5 groups within 700 m. Trying 800 and 1700 m put the nearest 810 m away,
+a 7 minute walk, spread too thinly to find in play.
+
+**Why animals bolt.** Each animal picks the biggest of its needs at `+0xb5d70`, and one of those is danger, which is stress plus its fear of the hunter and
+of other animals. Every generated animal starts with 0.3 stress, which takes minutes to fade. Once it has eaten and drunk, that's the biggest need,
+even with nothing around. Danger then runs `+0xb5bf0`, which picks goal 0xb when fear of the hunter is low. That goal is to flee from the hunter's
+position, at a gallop, however far away and whether it has noticed or not. So free hunt animals now start with no stress, and `+0xb689d` hides what stress
+they gain while both fears are below 0.1, so it only counts while they're reacting to something. Fear fades slowly, so a scared animal stays wary.
+Prey still runs from predators it notices within about 70 m. That's real behaviour and is left alone.
+
 ## Vehicles
 
 The ATV and the horse are the only vehicles. The horse moves by animation, so its speed is in its `.bhv` data.
@@ -457,11 +552,31 @@ That counts falling too, which is why it took a cliff to go fast. With no thrott
 speed every tick, at 40 ticks a second, which would stop it dead at any real speed. None of this depends on frame rate:
 physics runs at a fixed 40 Hz. Throttle is on or off. Reverse shares the cut-out, but with only 400 N.
 
-The tyres do hold it sideways, by cancelling sideways speed at each wheel, up to 0.8 m/s a tick. That's about 3 g, and
-the ATV rolls at around 1 g, so with any real speed a hard turn flips it, and the rider dies when it lands upside down.
-At 25 km/h it never mattered. The limit comes down to 0.22 m/s, about 0.8 g, so it slides first. The limit and the test
-for reaching it are separate: changing only the limit leaves full grip for any slide under 0.8 m/s, so it would still
-flip, and the test's values are shared with other code, so its operands get pointed at Longshot's own.
+The tyres do hold it sideways, by cancelling sideways speed at each wheel, up to 0.8 m/s a tick, as a force on the wheel of
+the chassis's mass times that speed times 10. With zero friction, that's all that holds it sideways, on hillsides and over
+bumps as well as in turns. Up to 2.4 g of it goes into cornering at full lock, so with any real speed a hard turn flips it,
+and the rider dies when it lands upside down. At 25 km/h it never mattered. Limiting it to 0.22 m/s, 0.65 g, stopped that,
+but left the ATV loose. A 30 degree hillside takes 0.5 g of that just to hold still, and a sideways kick from a bump took
+twice as long to settle. It's now 0.4 m/s, 1.2 g, and what stops the flipping is steering that asks for less, below. The limit
+and the test for reaching it are separate: changing only the limit leaves full grip for any slide under 0.8 m/s, and the
+test's values are shared with other code, so its operands get pointed at Longshot's own.
+
+Steering goes to 30 degrees at 50 degrees a second, whatever the speed. The wheelbase is 1.12 m, so that's a 1.9 m circle, or
+12 g at the top speed. The fronts can't give that, so they wash out and it runs wide. The rears have the longer lever, so it
+doesn't spin. The controls method, in the slot at `+0x1a28a8`, clamps to the float at `+0x1ee5e0`, so Longshot sets that for
+the length of the call, to the angle at which a turn takes 9 m/s2. That's all of it below 15 km/h, 12 degrees at 25 km/h and
+2.5 degrees at 55 km/h. The handlebars and rider read the same float elsewhere, which is why it's put back afterwards. A model from
+above at 40 Hz, with these rules, gives a 30 m circle at the top speed where it was 41 m, at 25% of the load that tips it on
+flat ground, against 19% before and 66% for the game's grip, which flipped.
+
+The controls start each frame in gear 2, for no keys. Forward is gear 0 and back is gear 1. Slowing with no throttle only
+happens in gear 2, so holding back turns it off, and leaves reverse's 800 N, or nothing above the cut-out. That's 2.4 m/s2, so
+back took 48 m to stop from 55 km/h where letting go took 18 m, and on a slope of over 14 degrees it couldn't hold the ATV at
+all. With zero friction it also never stops rolling downhill: at 2% a tick with no keys, it settles at 12 m/s times the sine
+of the slope. Longshot replaces the pointer to the tick, handed over at `+0x9a62e`, and first takes speed off anything on
+the ground: 10 m/s2 for a key against the way it's moving at over 0.5 m/s, and 2 m/s2 with no keys, which stops it on 12 degrees.
+Below 0.5 m/s back is reverse again. That stops it from 55 km/h in 1.2 s and 9 m, and down a 30 degree slope in 2 s and 15 m.
+Speed is taken off the body's whole velocity through `+0xbf30`, as the game does, so it can't pitch the ATV over its nose.
 
 It bounces for three reasons, which are worse the faster it goes. The suspension, set when the ATV is made at `+0x9b21c`,
 is ERP 0.7 and CFM 0.0007, which comes to a 40000 N/m spring with 429 N·s/m of damping. On 85 kg a corner that shakes about
@@ -506,8 +621,8 @@ the way the contact faces still decides, so a bad read can't turn a graze back i
 
 Lifting it doesn't bring the rolling back, because the tyres have no friction and the side grip is a force on the wheel
 bodies, so it acts at hub height, not at the ground. Its lever is the hub's depth below the centre of mass, about 10 cm.
-That's about 280 N·m at the grip limit, against the 384 N·m or so that used to roll it, and 1180 N·m to tip it on flat
-ground. Sideways on a slope it tips at the game's 46 degrees.
+That's about 300 N·m in a turn at 0.9 g, against the 1180 N·m it takes to tip it on flat ground. Sideways on a slope it tips
+at the game's 46 degrees.
 
 Whether the game's tyres ever bounced can't be read from the code. A contact bounces if the product of its materials'
 first fields is over 0.0001, and the setup at `+0x51c2` appears to fill in only the friction beside that field. The log
@@ -539,7 +654,9 @@ what actually limits it is a shader. Every grass material is `hu.dif_opac_attn`,
 one reader, so they can be changed while the game runs. Past 47 m the square edges of the blocks would show, so the
 walk and the 62 m have to grow too. Blocks are found by key and not by position in a grid, so that can't overflow.
 They're built on the main thread, and kept in a cache of 98, which has to grow with them. `grass.sii` has no distance
-in it.
+in it. The walk builds every block it finds missing, in that frame. Longshot steps in at `+0xf27c8`, where it has just found one, and once 2 ms of a frame has gone
+on building, sends the rest to `+0xf2933`, the walk's own way of moving on. They come up on the next frame. This takes an assembly stub, as it's in the
+middle of a function, and it's the only one in the project.
 
 **Trees** are the only thing with level of detail. Everything else is always drawn. Per plant, with `v` for
 `g_tree_lodswitch` and `s` for the scale below, `dist / s` under `50 * (1 + v)` is the full model, under `70 * (1 + v)`
@@ -552,6 +669,68 @@ thresholds are 35 and 85 m. It reads the frustum's field of view, so widening th
 at 3440x1440 the full model stopped at 56 m instead of 100. Longshot replaces the function at `+0xd01d0` with one that
 uses the game's own field of view, and multiplies it by `lod_distance`.
 
+## Terrain chunks
+
+A map is about 100 chunks, each 350 m square, and each chunk's physics and triangles are built when something first needs them. The landscape tick at
+`+0xd8e60` trims both caches every frame: it sorts the chunks by when they were last used, and lets go of any past the 9th, or not used for 100 frames.
+Anything that asks for more than 9 in a frame rebuilds the difference every frame, which `engine.log` reports as "Chunk physics data trashing" or
+"Chunk triangle heap data trashing". It only says so when the frame before let go of something too, so a chunk here and there doesn't show.
+
+That was the worst slowdown in a hunt. Physics at 15 chunks a frame cost 17 ms, which took 165 FPS down to 44, and triangles at 22 chunks a frame cost 7 ms,
+at about 2.7 ms and 0.5 ms for each chunk rebuilt. Both can turn on and off as you turn around. Every animal is tested against the view each frame
+at `+0xae2e0`, and drops to state 0 when out of it, so looking towards animals costs more even when they're too far away to see. A ray at `+0xd3740`
+also asks for every chunk touching the box around it, so a long ray at a diagonal asks for far more chunks than one along a map axis. What asks for
+the most chunks hasn't been pinned down.
+
+The 9 isn't arbitrary, because triangles have a harder limit. They go in a `triangle_heap_t`, which has 255 slots, with one for each piece of a chunk's model,
+and the slot number sits in the top byte of each triangle's id. Chunks have up to 43 pieces, and Arizona's largest 9 have exactly 255. `append` refuses
+once the slot count reaches 255, and it checks that before it looks at the free list, while `remove` never lowers the count. So holding 255 pieces once, even
+briefly, stops any more being added for the rest of the map. `+0xda590` ignores the failure and marks the chunk as held anyway, so ground queries there find
+nothing. That happened in play: grass gets its ground from here too, and a hunt that thrashed for minutes had none left around the player, then came back
+in the same spot once this was fixed. Physics has no such limit.
+
+Longshot raises both caches to 127 chunks, the most that `cmp` can hold. Nothing else calls `+0xda590` but the four sites it hooks, for ground, shadows,
+collisions and grass. Before a chunk loads, the hook lets go of the chunks used longest ago until its pieces fit in 254 slots, so the heap never reaches 255.
+
+The 100 frame rule goes too. It's half a second at 200 FPS, and was over a second and a half at the 60 FPS the game was made for. Animals look at the ground only now and
+then, so with that alone the log still showed 30 to 50 chunks reloading every 10 seconds, with none needed for room, and single frames of 11 to 13 ms in `sim`.
+
+Every 10 seconds, if anything was loaded, the log gets a `terrain:` line saying how much, for which site, and how many had to make room. Some are normal the
+first time a chunk is needed. Once a map has been driven around, a lot every 10 seconds means more pieces are wanted at once than fit.
+
+## Culling
+
+The game tests everything against the view, but not against anything in front of it. Each chunk's box is tested at `+0xd9103`, and only then is what's in it
+looked at. Chunks within `(10 + 70v) * s` of the camera then test each plant's box at `+0xe249f`, and further chunks draw a batch of billboards, which `+0xdc000`
+rebuilds whenever the view swings past about 30 degrees. Grass blocks and animals test a sphere.
+
+Northern Rockies has 24,938 plants, and all the maps together have 206,521. They're plain text in `landscape.game.sii`, as `plant_inst` with a position and a
+scale, and a chunk's triangles are in its `.pmg`, so what the ground hides can be measured without running the game. Reading both, and looking from all 146 start
+points in 8 directions at `lod_distance` 3, a view holds a median of 228 full trees and 4,604 billboards, and up to 10,000.
+
+With the margins below, the ground hides this much:
+
+| | Waterfall | Northern Rockies | Montana | Texas | Arizona |
+| --- | --- | --- | --- | --- | --- |
+| Full models | 36% | 17% | 19% | 11% | 23% |
+| Fading | 35% | 37% | 39% | 28% | 49% |
+| Whole chunks | 17% | 12% | | | |
+
+Longshot reads the terrain when a map loads, from the `Loading landscape` message at `+0xd894a`, which gives the path whatever kind of hunt it is. Each chunk's `.pmg`
+goes into a height map of 8 m cells, read every 4 m, and each cell keeps the lowest surface in it. So rocks and water don't count as cover, and the map can only be lower
+than the real ground, which hides less. Some maps skip a chunk number, and Texas starts from 1, so it asks `fs_file_exists` first.
+
+From that it builds a skyline: for each of 720 directions and every 8 m out to 1700 m, how high the ground has risen so far, as a slope. It's rebuilt when the camera moves 1 m, and
+what's hidden is then one look-up, so it needs no copy of a plant's result and works from any view. A box is hidden if the skyline short of its nearest edge is above its top
+in every direction it covers. The two calls in that first paragraph go through a pointer, so swapping the pointer in each gets the game's own test first, and this
+only runs on what's in view.
+
+The margins all hide less. The camera counts as 1 m higher and every box as 3 m taller, ground within 24 m hides nothing as it changes too fast as you move, and nothing
+within 40 m is hidden. A chunk's box is only its terrain, so it counts as 60 m taller and 15 m wider. The tallest plant as placed on any map is a 44.5 m poplar at 1.3 times, 57.6 m.
+A second camera in a frame gets no culling, rather than the time for another skyline.
+
+Trees aren't all that's left. Billboards in a chunk that's partly hidden are still drawn, and so is grass, and animals. `occlusion_culling=0` turns it off.
+
 ## Frame timing
 
 The engine creates no threads of its own, so a file read or a texture upload holds up the frame until it finishes.
@@ -562,9 +741,13 @@ The game object's frame method is at vtable `+0x04`. It advances the world, then
 one call.
 
 Each frame is split into `sim`, `world`, `ui`, `swap` and `sound`, and `post` sits inside `ui`. `swap` includes the frame limiter and waiting for
-vsync, so a large one on its own usually means spare time, not a problem. `files` and `uploads` sit inside the others,
-and are counted separately: `files` covers `fs_open`, `read` and `block_read` in every module, and `uploads` covers
-`glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2DARB` and `glBufferDataARB`.
+vsync, so a large one on its own usually means spare time, not a problem. The rest sit inside those, and are counted separately: `files` covers `fs_open`,
+`read` and `block_read` in every module, `uploads` covers `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2DARB` and `glBufferDataARB`, `grass` is
+blocks being built, `terrain` is chunks being loaded, `decode` is `ov_open_callbacks` and `ov_read`, `queues` is the time from `+0x1560a0` on, which is what's in `world`
+after the game has worked out what to draw, and `skyline` is occlusion's. Each line ends with the draw calls and triangles, per frame on the 10 second lines.
+
+`snd_update_state` runs twice a frame, once from the hunt's update at `+0x4344`, so `sound` can land inside `sim`. Streaming sounds refill a quarter of a second at a
+time, which is too little to explain the stalls in the table below. Neither sound module has a thread, so decoding holds up the frame, and `decode` is there to show whether that's what they are.
 
 Every 10 seconds the log gets the averages and the memory in use, and any frame over twice the usual length gets
 its own line, with `other` for time outside every section.
@@ -578,7 +761,7 @@ touched almost no files once it had loaded, because everything is loaded up fron
 | About 135 ms in `ui` | The Sound tab listing audio devices, logged as `[snd] device count` |
 | About 65 ms, then up to 25 ms in `swap` | The screenshot command reading the frame back and saving it, uncompressed |
 | About 40 ms in `world` | Once, 10 seconds into a hunt |
-| About 20 ms in `sound` | Once, starting a sound |
+| 8 to 35 ms in `sound` | Every 40 seconds or so, cause not known yet |
 | Up to 25 ms in `swap` | Coming back from alt-tab |
 
 ## Ruled out

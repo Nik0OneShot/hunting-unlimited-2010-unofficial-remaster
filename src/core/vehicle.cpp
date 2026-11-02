@@ -25,11 +25,12 @@ constexpr Tuned kAtv[] = {
     {0x9864f, 0x3F4CCCCD, 0x3F7AE148},
     // Turns speed into engine sound, so that the top of the range is still the top speed.
     {0x1a2748, 0x3E138CE9, 0x3D860D08},
-    // How much sideways speed the tyres can take off in a tick, each way. The game's 0.8 m/s is about
-    // 3 g of cornering, far past the 1 g or so that rolls the ATV, which is fine at 25 km/h but kills
-    // the rider at any real speed. At 0.22 m/s it's about 0.8 g, so the tyres let go first.
-    {0x986ed, 0x3F4CCCCD, 0x3E6147AE},
-    {0x986f5, 0xBF4CCCCD, 0xBE6147AE},
+    // How much sideways speed the tyres can take off in a tick, each way. They have no friction, so
+    // this is all that holds the ATV sideways, on hillsides and over bumps as well as in turns. The
+    // game's 0.8 m/s is 2.4 g of cornering, which flips it and kills the rider. 0.4 m/s is 1.2 g, and
+    // the steering limit below keeps turns to 0.9 g, which leaves the rest for everything else.
+    {0x986ed, 0x3F4CCCCD, 0x3ECCCCCD},
+    {0x986f5, 0xBF4CCCCD, 0xBECCCCCD},
     // The suspension, as ODE's softness and correction. The game's come to a 40000 N/m spring with
     // 12% of the damping it takes to settle, so it shakes about 3.5 times a second and is still going
     // when the next bump arrives. These are 15000 N/m with 66%, which settles within one swing.
@@ -40,7 +41,7 @@ constexpr Tuned kAtv[] = {
 
 // Those limits only apply past a sideways speed that's checked separately, against values other
 // code shares. So the checks are pointed at values of their own.
-constexpr float kGripLimit = 0.22f;
+constexpr float kGripLimit = 0.40f;
 const float kGripAbove = kGripLimit;
 const float kGripBelow = -kGripLimit;
 
@@ -111,6 +112,37 @@ const float kWheelDrop = -0.10f;
 unsigned char g_wheel_game[kWheelHeightSize] = {0xD9, 0x46, 0x54, 0xD8, 0x0D};  // fld [esi+0x54], fmul [kHalf]
 unsigned char g_wheel_strong[kWheelHeightSize] = {0xD9, 0x05, 0, 0, 0, 0, 0x90, 0x90, 0x90};  // fld [kWheelDrop]
 
+// Holding back selects reverse, which turns off the slowing that happens with no keys held, and
+// pushes back with only 800 N, or nothing above the top speed. So back did less than letting go, and
+// couldn't hold the ATV on a slope of more than 14 degrees. These run once a physics tick, on the
+// ground, as a change in speed, the same way the game slows it.
+constexpr uintptr_t kTick = 0x98510;
+constexpr uintptr_t kTickPointer = 0x9a62f;  // inside the mov that gives the physics its tick
+constexpr uintptr_t kControlsSlot = 0x1a28a8;
+constexpr uintptr_t kMostSteering = 0x1ee5e0;
+constexpr uintptr_t kSetVelocity = 0xbf30;
+constexpr uintptr_t kLocalVelocity = 0x154230;
+constexpr size_t kAtvActive = 0x58;
+constexpr size_t kAtvBody = 0xc0;
+constexpr size_t kAtvOnGround = 0x118;
+constexpr size_t kAtvGear = 0x11c;
+constexpr size_t kAtvRunning = 0x2c0;
+constexpr size_t kMethodVelocity = 0x60;
+
+constexpr int kGearForward = 0;
+constexpr int kGearBack = 1;
+constexpr int kGearNone = 2;
+
+constexpr float kBrakeFrom = 0.5f;      // m/s the wrong way before a key counts as braking
+constexpr float kBraking = 10.0f;       // m/s2 on top of reverse's own push: 55 km/h stops in 9 m
+constexpr float kRollingDrag = 2.0f;    // m/s2 with no keys held, so that it stops on a 12 degree slope
+
+// Steering goes up to 30 degrees at any speed, on a wheelbase of 1.12 m, which is a 1.9 m circle.
+// That asks the tyres for 12 g at top speed, so they wash out and it runs wide. Steering stops where
+// a turn would take this many m/s2, which is 2.5 degrees at the top speed and all of it below 15 km/h.
+constexpr float kWheelbase = 1.12f;
+constexpr float kMostCornering = 9.0f;
+
 // A report of how far the tyres sank and how often the chassis touched, every 10 seconds or so of
 // driving on all four wheels.
 constexpr int kContactsPerReport = 1600;
@@ -120,8 +152,15 @@ constexpr int kMostReports = 60;
 constexpr DWORD kTouchGapMs = 250;
 constexpr int kMostTouches = 100;
 
+using TickFn = void(__thiscall*)(void*, void*);
+using ControlsFn = void(__thiscall*)(void*, float);
+using VelocityFn = const float*(__thiscall*)(void*);
+using SetVelocityFn = void(__thiscall*)(void*, const float*);
+using LocalVelocityFn = void*(__thiscall*)(void*, float*);
+
 char* g_game = nullptr;
 bool g_ready = false;
+void* g_real_controls = nullptr;
 
 float g_deepest = 0.0f;
 int g_contacts = 0;
@@ -130,6 +169,11 @@ int g_reports = 0;
 bool g_told_bounce = false;
 DWORD g_last_touch = 0;
 int g_touches = 0;
+
+template <typename T>
+T& field(void* object, size_t offset) {
+    return *reinterpret_cast<T*>(static_cast<char*>(object) + offset);
+}
 
 enum class Part { None, Tyre, Chassis };
 
@@ -218,6 +262,58 @@ void report_tyres(const Contact& contact) {
     g_chassis_contacts = 0;
 }
 
+// `along` is the speed in the way it's pointing, and backwards if negative.
+float atv_speed_after(float speed, float along, int gear) {
+    const bool braking = (gear == kGearBack && along > kBrakeFrom) || (gear == kGearForward && along < -kBrakeFrom);
+    const float slowing = braking ? kBraking : gear == kGearNone ? kRollingDrag : 0.0f;
+    const float left = speed - slowing * kPhysicsTick;
+    return left > 0.0f ? left : 0.0f;
+}
+
+float atv_steering_limit(float speed, float most) {
+    if (speed < 1.0f) return most;
+    const float limit = atanf(kWheelbase * kMostCornering / (speed * speed));
+    return limit < most ? limit : most;
+}
+
+const float* velocity_of(char* body) {
+    const auto method = (*reinterpret_cast<void***>(body))[kMethodVelocity / sizeof(void*)];
+    return reinterpret_cast<VelocityFn>(method)(body);
+}
+
+float length(const float* v) { return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+
+void slow_down(char* atv) {
+    char* body = field<char*>(atv, kAtvBody);
+    if (!body || !field<uint8_t>(atv, kAtvOnGround)) return;
+    const float* velocity = velocity_of(body);
+    const float speed = length(velocity);
+    if (speed <= 0.0f) return;
+    float local[3];
+    reinterpret_cast<LocalVelocityFn>(g_game + kLocalVelocity)(body, local);
+    const float left = atv_speed_after(speed, -local[2], field<int>(atv, kAtvGear));
+    if (left == speed) return;
+    const float share = left / speed;
+    const float slower[3] = {velocity[0] * share, velocity[1] * share, velocity[2] * share};
+    reinterpret_cast<SetVelocityFn>(g_game + kSetVelocity)(body, slower);
+}
+
+void __fastcall hook_atv_tick(char* atv, void*, void* step) {
+    const bool running = field<uint8_t>(atv, kAtvActive) || field<int>(atv, kAtvRunning) == 1;
+    if (g_cfg.strong_atv && running) slow_down(atv);
+    reinterpret_cast<TickFn>(g_game + kTick)(atv, step);
+}
+
+// The handlebars and the rider read the same limit, so it's only changed while this one runs.
+void __fastcall hook_atv_controls(char* atv, void*, float seconds) {
+    float& most = *reinterpret_cast<float*>(g_game + kMostSteering);
+    const float game_most = most;
+    char* body = field<char*>(atv, kAtvBody);
+    if (g_cfg.strong_atv && body) most = atv_steering_limit(length(velocity_of(body)), game_most);
+    reinterpret_cast<ControlsFn>(g_real_controls)(atv, seconds);
+    most = game_most;
+}
+
 }  // namespace
 
 void vehicle_contact(Contact* contact) {
@@ -273,6 +369,13 @@ void vehicle_attach_game(HMODULE game, bool verified) {
     g_ready = g_ready && memcmp(g_game + kWheelHeight, g_wheel_game, kWheelHeightSize) == 0;
     logf("vehicle: ATV %s", g_ready ? "found" : "not as expected, leaving it alone");
     vehicle_settings_changed();
+    if (!g_ready) return;
+    const void* game_tick = g_game + kTick;
+    const void* our_tick = reinterpret_cast<const void*>(&hook_atv_tick);
+    const bool tick = patch_bytes(g_game + kTickPointer, &game_tick, &our_tick, sizeof(our_tick));
+    const bool controls = vtable_patch(reinterpret_cast<void**>(g_game + kControlsSlot),
+                                       reinterpret_cast<void*>(&hook_atv_controls), &g_real_controls);
+    logf("vehicle: brakes=%d steering=%d", tick, controls);
 }
 
 int vehicle_test() {
@@ -350,7 +453,26 @@ int vehicle_test() {
     g_crash_speed_squared = kGameCrashSpeedSquared;
     g_cfg.strong_atv = was_strong;
     g_ready = was_ready;
-    return failed;
+    if (failed) return failed;
+
+    const float braked = kBraking * kPhysicsTick;
+    const float drag = kRollingDrag * kPhysicsTick;
+    const auto about = [](float a, float b) { return fabsf(a - b) < 0.0001f; };
+    if (!about(atv_speed_after(15.0f, 15.0f, kGearBack), 15.0f - braked)) return 13;       // back, going forwards
+    if (!about(atv_speed_after(15.0f, -15.0f, kGearForward), 15.0f - braked)) return 14;   // forward, going backwards
+    if (!about(atv_speed_after(15.0f, 15.0f, kGearForward), 15.0f)) return 15;             // just driving
+    if (!about(atv_speed_after(5.0f, -5.0f, kGearBack), 5.0f)) return 16;                  // just reversing
+    if (!about(atv_speed_after(0.2f, 0.2f, kGearBack), 0.2f)) return 17;                   // stopped, so back reverses
+    if (!about(atv_speed_after(15.0f, 15.0f, kGearNone), 15.0f - drag)) return 18;         // no keys
+    if (!about(atv_speed_after(0.04f, 0.04f, kGearNone), 0.0f)) return 19;                 // and never past a stop
+
+    constexpr float kFullLock = 0.5236f;
+    if (!about(atv_steering_limit(0.0f, kFullLock), kFullLock)) return 21;
+    if (!about(atv_steering_limit(4.0f, kFullLock), kFullLock)) return 22;                 // below 15 km/h
+    const float at_top = atv_steering_limit(15.3f, kFullLock);
+    if (at_top < 0.03f || at_top > 0.06f) return 23;
+    if (atv_steering_limit(8.0f, kFullLock) <= atv_steering_limit(12.0f, kFullLock)) return 24;
+    return 0;
 }
 
 }  // namespace longshot

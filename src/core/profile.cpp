@@ -32,11 +32,17 @@ using TexImageFn = void(WINAPI*)(unsigned, int, int, int, int, int, unsigned, un
 using TexSubImageFn = void(WINAPI*)(unsigned, int, int, int, int, int, unsigned, unsigned, const void*);
 using CompressedTexImageFn = void(WINAPI*)(unsigned, int, unsigned, int, int, int, int, const void*);
 using BufferDataFn = void(WINAPI*)(unsigned, ptrdiff_t, const void*, unsigned);
+using DrawElementsFn = void(WINAPI*)(unsigned, int, unsigned, const void*);
+using DrawRangeElementsFn = void(WINAPI*)(unsigned, unsigned, unsigned, int, unsigned, const void*);
+using DrawArraysFn = void(WINAPI*)(unsigned, int, int);
 
 struct Totals {
     double seconds[static_cast<int>(ProfileSection::Count)] = {};
     int files = 0;
     int uploads = 0;
+    int blocks = 0;
+    int draws = 0;
+    double triangles = 0.0;
 };
 
 Totals g_frame;
@@ -57,6 +63,9 @@ TexImageFn g_real_tex_image = nullptr;
 TexSubImageFn g_real_tex_sub_image = nullptr;
 CompressedTexImageFn g_real_compressed_tex_image = nullptr;
 BufferDataFn g_real_buffer_data = nullptr;
+DrawElementsFn g_real_draw_elements = nullptr;
+DrawRangeElementsFn g_real_draw_range_elements = nullptr;
+DrawArraysFn g_real_draw_arrays = nullptr;
 
 void add(ProfileSection section, double seconds) {
     g_frame.seconds[static_cast<int>(section)] += seconds;
@@ -125,21 +134,48 @@ void WINAPI hook_buffer_data(unsigned target, ptrdiff_t size, const void* data, 
     g_real_buffer_data(target, size, data, usage);
 }
 
+void count_draw(int vertices) {
+    ++g_frame.draws;
+    g_frame.triangles += vertices / 3;
+}
+
+void WINAPI hook_draw_elements(unsigned mode, int count, unsigned type, const void* indices) {
+    count_draw(count);
+    g_real_draw_elements(mode, count, type, indices);
+}
+
+void WINAPI hook_draw_range_elements(unsigned mode, unsigned first, unsigned last, int count, unsigned type, const void* indices) {
+    count_draw(count);
+    g_real_draw_range_elements(mode, first, last, count, type, indices);
+}
+
+void WINAPI hook_draw_arrays(unsigned mode, int first, int count) {
+    count_draw(count);
+    g_real_draw_arrays(mode, first, count);
+}
+
 void add_totals(Totals* into, const Totals& from) {
     for (int i = 0; i < static_cast<int>(ProfileSection::Count); ++i) {
         into->seconds[i] += from.seconds[i];
     }
     into->files += from.files;
     into->uploads += from.uploads;
+    into->blocks += from.blocks;
+    into->draws += from.draws;
+    into->triangles += from.triangles;
 }
 
 void format_sections(char* out, size_t size, const Totals& totals, double scale) {
     const auto ms = [&](ProfileSection section) { return seconds_of(totals, section) * scale * 1000.0; };
     snprintf(out, size, "sim %.2f world %.2f ui %.2f swap %.2f sound %.2f | post %.2f | "
-             "files %.2f ms, %d opened | uploads %.2f ms, %d calls",
+             "files %.2f ms, %d opened | uploads %.2f ms, %d calls | grass %.2f ms, %d blocks | "
+             "terrain %.2f | decode %.2f | queues %.2f | skyline %.2f | %.0f draws, %.0fk triangles",
              ms(ProfileSection::Sim), ms(ProfileSection::World), ms(ProfileSection::Ui),
              ms(ProfileSection::Swap), ms(ProfileSection::Sound), ms(ProfileSection::Post),
-             ms(ProfileSection::Files), totals.files, ms(ProfileSection::Uploads), totals.uploads);
+             ms(ProfileSection::Files), totals.files, ms(ProfileSection::Uploads), totals.uploads,
+             ms(ProfileSection::Grass), totals.blocks, ms(ProfileSection::Terrain), ms(ProfileSection::Decode),
+             ms(ProfileSection::Queues), ms(ProfileSection::Occlusion), totals.draws * scale,
+             totals.triangles * scale / 1000.0);
 }
 
 // Time outside every section, like reading the screen back for a screenshot. Files and Uploads
@@ -191,7 +227,7 @@ void profile_frame_done(float frame_ms, float typical_ms, bool focused) {
     if (focused && profile_is_slow(frame_ms, typical_ms)) {
         ++g_window_slow;
         if (g_window_slow <= kMaxSlowLines) {
-            char text[180];
+            char text[300];
             format_sections(text, sizeof(text), g_frame, 1.0);
             logf("slow frame: %.2f ms | other %.2f %s", frame_ms, unaccounted_ms(frame_ms), text);
         }
@@ -200,15 +236,24 @@ void profile_frame_done(float frame_ms, float typical_ms, bool focused) {
     g_render_started = 0.0;
 }
 
+void profile_grass_block(double seconds) {
+    add(ProfileSection::Grass, seconds);
+    ++g_frame.blocks;
+}
+
+double profile_frame_seconds(ProfileSection section) { return seconds_of(g_frame, section); }
+
 void profile_report_window() {
     if (g_window_frames == 0) return;
-    char text[180];
+    char text[300];
     format_sections(text, sizeof(text), g_window, 1.0 / g_window_frames);
     logf("frame average: %s", text);
     report_memory();
     if (g_window_slow > kMaxSlowLines) {
         logf("slow frames: %d more not listed", g_window_slow - kMaxSlowLines);
     }
+    terrain_report();
+    occlusion_report();
     g_window = Totals{};
     g_window_frames = 0;
     g_window_slow = 0;
@@ -264,6 +309,18 @@ void* profile_wrap_gl(const char* name, void* proc) {
     if (!strcmp(name, "glCompressedTexImage2DARB")) {
         g_real_compressed_tex_image = reinterpret_cast<CompressedTexImageFn>(proc);
         return reinterpret_cast<void*>(&hook_compressed_tex_image);
+    }
+    if (!strcmp(name, "glDrawElements")) {
+        g_real_draw_elements = reinterpret_cast<DrawElementsFn>(proc);
+        return reinterpret_cast<void*>(&hook_draw_elements);
+    }
+    if (!strcmp(name, "glDrawRangeElementsEXT")) {
+        g_real_draw_range_elements = reinterpret_cast<DrawRangeElementsFn>(proc);
+        return reinterpret_cast<void*>(&hook_draw_range_elements);
+    }
+    if (!strcmp(name, "glDrawArrays")) {
+        g_real_draw_arrays = reinterpret_cast<DrawArraysFn>(proc);
+        return reinterpret_cast<void*>(&hook_draw_arrays);
     }
     if (!strcmp(name, "glBufferDataARB")) {
         g_real_buffer_data = reinterpret_cast<BufferDataFn>(proc);

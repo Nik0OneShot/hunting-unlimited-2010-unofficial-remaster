@@ -64,9 +64,12 @@ void on_module_loaded(HMODULE mod, const char* path) {
         menu_attach_game(mod, verified);
         view_attach_game(mod, verified);
         detail_attach_game(mod, verified);
+        terrain_attach_game(mod, verified);
+        occlusion_attach_game(mod, verified);
         weapons_attach_game(mod, verified);
         vehicle_attach_game(mod, verified);
         walking_attach_game(mod, verified);
+        free_hunt_attach_game(mod, verified);
         settings_attach_game(mod, verified);
         profile_attach_game(mod, verified);
     }
@@ -224,6 +227,18 @@ extern "C" __declspec(dllexport) int __cdecl longshot_test_post() { return post_
 extern "C" __declspec(dllexport) int __cdecl longshot_test_weapons() { return weapons_test(); }
 
 extern "C" __declspec(dllexport) int __cdecl longshot_test_vehicle() { return vehicle_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_free_hunt() { return free_hunt_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_terrain() { return terrain_test(); }
+
+extern "C" __declspec(dllexport) int __cdecl longshot_test_occlusion() { return occlusion_test(); }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_noise(float speed) { return walking_noise(speed); }
+
+extern "C" __declspec(dllexport) float __cdecl longshot_test_step(float speed) { return walking_step_volume(speed); }
+
+extern "C" __declspec(dllexport) unsigned __cdecl longshot_test_ground(unsigned ground) { return walking_step_ground(ground); }
 
 extern "C" __declspec(dllexport) float __cdecl longshot_test_drift(float along, float across) {
     return walking_drift(along, across);

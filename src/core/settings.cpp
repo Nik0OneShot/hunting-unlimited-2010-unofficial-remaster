@@ -121,6 +121,11 @@ const Row kRows[] = {
     {"Weapon input queue", L"game", L"weapon_queue", kOnOff, count_of(kOnOff), "1", false},
     {"Weapon action speed", L"game", L"action_speed", kActionSpeed, count_of(kActionSpeed), "1", false},
     {"Strong ATV", L"game", L"strong_atv", kOnOff, count_of(kOnOff), "1", false},
+    {"Faster walking", L"game", L"faster_walking", kOnOff, count_of(kOnOff), "1", false},
+    {"Noise follows your speed", L"game", L"speed_noise", kOnOff, count_of(kOnOff), "1", false},
+    {"Ironsight sway moves the view", L"game", L"irons_view_sway", kOnOff, count_of(kOnOff), "1", false},
+    {"Free hunt opening shot", L"game", L"free_hunt_opening", kOnOff, count_of(kOnOff), "0", false},
+    {"Free hunt new animals", L"game", L"free_hunt_animals", kOnOff, count_of(kOnOff), "1", false},
     {"Pause in the background", L"game", L"pause_in_background", kOnOff, count_of(kOnOff), "0", true},
     {"Skip the intro", L"game", L"skip_intro", kOnOff, count_of(kOnOff), "0", true},
 };
@@ -233,6 +238,9 @@ void save_rows() {
     display_settings_changed();
     detail_settings_changed();
     vehicle_settings_changed();
+    walking_settings_changed();
+    weapons_settings_changed();
+    free_hunt_settings_changed();
 }
 
 // Hides whichever of the game's own tabs is showing, the same way the game reaches it.
@@ -314,8 +322,8 @@ std::string settings_tab_entity() {
 }
 
 std::string settings_page_entity() {
-    constexpr int kFirstTop = 640;
-    constexpr int kRowStep = 27;
+    constexpr int kFirstTop = 668;
+    constexpr int kRowStep = 23;
 
     std::string rows;
     int top = kFirstTop;

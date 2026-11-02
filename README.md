@@ -19,12 +19,23 @@ Not affiliated with or endorsed by SCS Software or THQ.
 | The game clock ticks in whole milliseconds, which causes stutter at high refresh rates | Sub-millisecond clock |
 | Wide screens crop the top and bottom of the view | Proper Hor+ field of view |
 | No anti-aliasing, and jagged leaves and grass | Up to 8x anti-aliasing, including foliage edges, and 16x texture filtering |
+| The frame rate can fall by two thirds depending on where you look, because terrain data is rebuilt every frame | Terrain data stays loaded, and can't run out of room |
+| Everything in view gets drawn, even behind a hill | Terrain and trees hidden by the ground are skipped, which looks the same and draws less |
 | Grass and trees pop in close to you | Grass out to 85 m, and trees that keep their detail up to 3x further |
 | A flat, soft image by modern standards | Optional sharpening, richer colour and bloom, which leave the HUD alone |
 | Holding forward walks you slightly off to the side | You walk where you're heading |
 | Weapons ignore or misplay presses made while they're busy | Presses wait their turn, the latest one decides, and reloads can be cut short |
 | Fire, holster, and the scope comes back up first | It goes straight to cocking and holstering |
 | The ATV cuts out at 25 km/h, stalls on hills, and bounces constantly | It pulls away properly, climbs without a run-up, reaches 55 km/h, and rides on its suspension |
+| The ATV's brake does less than letting go, and it can't hold it on a hill | It stops from 55 km/h in about 9 m, and holds it on hills |
+| The ATV washes wide in turns, and wanders on hills and over bumps | Steering suits your speed, and it holds its line |
+| Walking is slow, and half that backwards or sideways | A bit faster forward, and most of that speed in every direction |
+| Footsteps have two volumes, and animals don't hear how fast you go | Both follow your real speed, so creeping is quieter and running is louder |
+| Footsteps go silent on some ground | Every step makes a sound |
+| Ironsight shots land away from the sights | Sway moves the whole view, as in a scope, so shots go where the sights are |
+| A free hunt runs out of animals, and opens by showing you where one is | New herds arrive to hold the population you chose, and you start straight at your marker |
+| Free hunt animals start close by, and can bolt for no reason | They start at least 450 m away, and only run from what they've noticed |
+| The free hunt map marker snaps to points about 200 m apart | It goes almost anywhere, and a hunt never starts you in water |
 | Your eyelids close whenever the sun is anywhere in a wide view | Only when you're looking close to the sun |
 | Menus and HUD are stretched on wide screens | Correct proportions, with menus centred and their backgrounds filling the sides |
 | The HUD can't use a wide screen | Put it at the screen edges, in a centred 16:9 area, or in a centred 4:3 area |

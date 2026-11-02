@@ -189,7 +189,10 @@ void __cdecl hook_projection(void* matrix, const float* rect, float near_plane, 
 
 // Camera setup doesn't run on every frame, so this is the only sure sign the world was drawn.
 void __cdecl hook_draw_world(void* context) {
-    reinterpret_cast<DrawQueuesFn>(g_game + kDrawQueues)(context);
+    {
+        ProfileTimer timer(ProfileSection::Queues);
+        reinterpret_cast<DrawQueuesFn>(g_game + kDrawQueues)(context);
+    }
     g_world_finished = true;
 }
 
@@ -322,6 +325,7 @@ void __cdecl hook_ui_init() {
 void __cdecl hook_ui_process(void* context) {
     profile_ui_begin();
     weapons_end_frame();
+    free_hunt_end_frame();
     const bool world_shown = g_in_hunt && g_world_finished;
     g_world_finished = false;
     display_before_ui();
@@ -362,6 +366,13 @@ int view_background_pause_step(bool* ours, bool in_hunt, bool focused, bool game
     if (want == *ours || (want && game_paused)) return 0;
     *ours = want;
     return want ? 1 : -1;
+}
+
+bool view_hunt_running() {
+    char* game = game_object();
+    if (!g_in_hunt || !game) return false;
+    void** methods = *reinterpret_cast<void***>(game);
+    return !reinterpret_cast<IsPausedFn>(methods[kMethodIsPaused / sizeof(void*)])(game);
 }
 
 void view_update_background_pause() {

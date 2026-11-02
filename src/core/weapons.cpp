@@ -21,6 +21,13 @@ constexpr uintptr_t kItemStepCall = 0xa2982;
 constexpr uintptr_t kRifleVtable = 0x1a4170;
 constexpr uintptr_t kBowVtable = 0x1a3ff8;
 constexpr uintptr_t kRifleListenerVtable = 0x1a4168;
+constexpr uintptr_t kSwayOffset = 0xa6150;     // sway for a weapon's model and shot
+constexpr uintptr_t kShotSwayCall = 0xa7572;
+constexpr uintptr_t kModelSwayCall = 0xabbce;
+constexpr uintptr_t kViewSway = 0xa68c0;       // sway for the camera, used in a scope
+constexpr uintptr_t kViewSwayCheck = 0xaa976;  // skips the camera's sway while the gun is drawn
+constexpr uintptr_t kViewSwayCall = 0xaa97b;
+constexpr uintptr_t kAimedGunLag = 0x1e1164;   // how far the gun can trail the view while aimed
 
 // The player, what it holds, and what a weapon keeps. Reading these is safe on the verified build.
 constexpr size_t kPlayerPending = 0x58;  // a request the game is already working through
@@ -38,6 +45,9 @@ constexpr size_t kRifleAmmo = 0x8c;
 constexpr size_t kRifleLowerWanted = 0x1fc;
 constexpr size_t kRifleScopeFitted = 0x264;
 constexpr size_t kRifleAimed = 0x265;
+constexpr size_t kRifleModelShown = 0x2b4;
+constexpr size_t kRifleSwayYaw = 0x2bc;
+constexpr size_t kRifleSwayPitch = 0x2c0;
 constexpr size_t kRiflePhase = 0x340;
 constexpr size_t kRifleStopReload = 0x34c;
 constexpr size_t kRifleListener = 0x60;  // the rifle hears its animations end through this
@@ -55,6 +65,11 @@ constexpr int kPhaseAimIn = 13;
 constexpr int kPhaseAimOut = 14;
 constexpr int kBowPhaseAimIn = 8;
 constexpr int kBowPhaseAimOut = 9;
+
+// The camera's sway is twice what the gun's is, which suits the narrow view of a scope. Ironsights
+// keep the size the gun had.
+constexpr float kIronsSwayShare = 0.5f;
+constexpr float kGameAimedGunLag = 0.12f;
 
 enum class Action { None, Fire, Reload, Use, Sights };
 
@@ -116,6 +131,8 @@ using ImpulseActivatedFn = bool(__cdecl*)(int);
 using PlayerInputFn = void(__fastcall*)(void*, void*);
 using ModelStepFn = void(__cdecl*)(void*, double);
 using RifleEventFn = void(__fastcall*)(void*, void*, int, void*, void*);
+using SwayOffsetFn = float*(__fastcall*)(void*, void*, float*);
+using ViewSwayFn = void(__fastcall*)(void*, void*, void*);
 
 char* g_game = nullptr;
 bool g_verified = false;
@@ -125,6 +142,8 @@ void* g_player = nullptr;
 ActionQueue g_queue;
 bool g_pressed[kImpulseCount] = {};
 bool g_polled = false;
+bool g_lag_ready = false;
+float g_aimed_lag = kGameAimedGunLag;
 
 template <typename T>
 T& field(void* object, size_t offset) {
@@ -273,7 +292,49 @@ bool hook_step(uintptr_t site, void (__cdecl* hook)(void*, double)) {
     return patch_call(g_game + site, g_game + kModelStep, reinterpret_cast<const void*>(hook));
 }
 
+// The sway offset is shared with bows, which keep their own way of aiming.
+bool in_ironsights(void* weapon) {
+    return g_cfg.irons_view_sway && field<void*>(weapon, 0) == g_game + kRifleVtable &&
+           field<bool>(weapon, kRifleAimed) && !field<bool>(weapon, kRifleScopeFitted);
+}
+
+// In ironsights the game turns the gun and the shot by the same angle. That isn't the angle the sights
+// move on screen, since the gun turns about its own centre and is drawn with its own field of view,
+// so the sights and the shot disagree. Turning the camera instead takes both along with it.
+float* __fastcall hook_sway_offset(void* weapon, void* unused, float* offset) {
+    if (in_ironsights(weapon)) {
+        offset[0] = offset[1] = offset[2] = 0.0f;
+        return offset;
+    }
+    return reinterpret_cast<SwayOffsetFn>(g_game + kSwayOffset)(weapon, unused, offset);
+}
+
+void __fastcall hook_view_sway(void* rifle, void* unused, void* placement) {
+    const auto view_sway = reinterpret_cast<ViewSwayFn>(g_game + kViewSway);
+    if (!field<bool>(rifle, kRifleModelShown)) {
+        view_sway(rifle, unused, placement);
+    } else if (in_ironsights(rifle)) {
+        float& yaw = field<float>(rifle, kRifleSwayYaw);
+        float& pitch = field<float>(rifle, kRifleSwayPitch);
+        const float full_yaw = yaw;
+        const float full_pitch = pitch;
+        yaw *= kIronsSwayShare;
+        pitch *= kIronsSwayShare;
+        view_sway(rifle, unused, placement);
+        yaw = full_yaw;
+        pitch = full_pitch;
+    }
+}
+
 }  // namespace
+
+// The gun trailing a turn shifts the sights too, and the shot doesn't follow that either.
+void weapons_settings_changed() {
+    if (!g_lag_ready) return;
+    const float wanted = g_cfg.irons_view_sway ? 0.0f : kGameAimedGunLag;
+    if (wanted == g_aimed_lag) return;
+    if (patch_bytes(g_game + kAimedGunLag, &g_aimed_lag, &wanted, sizeof(wanted))) g_aimed_lag = wanted;
+}
 
 void weapons_attach_game(HMODULE game, bool verified) {
     g_game = reinterpret_cast<char*>(game);
@@ -298,6 +359,18 @@ void weapons_game_ready() {
     const bool steps = hook_step(kRifleStepCall, hook_weapon_step) && hook_step(kBowStepCall, hook_weapon_step) &&
                        hook_step(kItemStepCall, hook_item_step);
     logf("weapons: event=%d input=%d steps=%d", event, input, steps);
+
+    const auto offset = reinterpret_cast<const void*>(&hook_sway_offset);
+    const bool shot = patch_call(g_game + kShotSwayCall, g_game + kSwayOffset, offset);
+    const bool model = patch_call(g_game + kModelSwayCall, g_game + kSwayOffset, offset);
+    constexpr unsigned char kSkip[] = {0x75, 0x08};  // jne past the call
+    constexpr unsigned char kFallThrough[] = {0x90, 0x90};
+    const bool check = patch_bytes(g_game + kViewSwayCheck, kSkip, kFallThrough, sizeof(kSkip));
+    const bool view = patch_call(g_game + kViewSwayCall, g_game + kViewSway,
+                                 reinterpret_cast<const void*>(&hook_view_sway));
+    logf("weapons: sway shot=%d model=%d check=%d view=%d", shot, model, check, view);
+    g_lag_ready = true;
+    weapons_settings_changed();
 }
 
 void weapons_end_frame() { g_polled = false; }

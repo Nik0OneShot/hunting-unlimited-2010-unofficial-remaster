@@ -74,6 +74,7 @@ void config_load() {
     g_cfg.texture_filtering = read_int(L"view", L"texture_filtering", g_cfg.texture_filtering);
     g_cfg.grass_distance = read_float(L"view", L"grass_distance", g_cfg.grass_distance);
     g_cfg.lod_distance = read_float(L"view", L"lod_distance", g_cfg.lod_distance);
+    g_cfg.occlusion_culling = read_bool(L"view", L"occlusion_culling", g_cfg.occlusion_culling);
     g_cfg.sharpening = read_float(L"view", L"sharpening", g_cfg.sharpening);
     g_cfg.vibrance = read_float(L"view", L"vibrance", g_cfg.vibrance);
     g_cfg.bloom = read_float(L"view", L"bloom", g_cfg.bloom);
@@ -102,6 +103,15 @@ void config_load() {
     g_cfg.weapon_queue = read_bool(L"game", L"weapon_queue", g_cfg.weapon_queue);
     g_cfg.action_speed = read_float(L"game", L"action_speed", g_cfg.action_speed);
     g_cfg.strong_atv = read_bool(L"game", L"strong_atv", g_cfg.strong_atv);
+    g_cfg.faster_walking = read_bool(L"game", L"faster_walking", g_cfg.faster_walking);
+    g_cfg.walk_speed = read_float(L"game", L"walk_speed", g_cfg.walk_speed);
+    g_cfg.side_speed = read_float(L"game", L"side_speed", g_cfg.side_speed);
+    g_cfg.speed_noise = read_bool(L"game", L"speed_noise", g_cfg.speed_noise);
+    g_cfg.irons_view_sway = read_bool(L"game", L"irons_view_sway", g_cfg.irons_view_sway);
+    g_cfg.free_hunt_opening = read_bool(L"game", L"free_hunt_opening", g_cfg.free_hunt_opening);
+    g_cfg.free_hunt_animals = read_bool(L"game", L"free_hunt_animals", g_cfg.free_hunt_animals);
+    g_cfg.free_hunt_calm_animals = read_bool(L"game", L"free_hunt_calm_animals", g_cfg.free_hunt_calm_animals);
+    g_cfg.free_hunt_any_marker = read_bool(L"game", L"free_hunt_any_marker", g_cfg.free_hunt_any_marker);
     g_cfg.pause_in_background =
         read_bool(L"game", L"pause_in_background", g_cfg.pause_in_background);
 

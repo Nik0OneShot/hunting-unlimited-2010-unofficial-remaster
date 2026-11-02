@@ -54,15 +54,30 @@ constexpr Patch kGrassReach[] = {
     {0x1aaac4, {0x00, 0x40, 0x70, 0x45}, {0x00, 0x40, 0x1C, 0x46}, 4},
 };
 
+// Each block is built the first frame it's in reach, however many there are, so moving brought a run
+// of slow frames. Once this many seconds have gone on it in a frame, the rest wait for the next one.
+// They're at the far edge, where grass has faded out, so a few frames' wait doesn't show.
+constexpr double kGrassSecondsPerFrame = 0.002;
+constexpr uintptr_t kBlockMissing = 0xf27c8;  // where the walk finds a block isn't built yet
+constexpr uintptr_t kBlockSkipped = 0xf2933;  // where it lets go of one and moves on
+constexpr uintptr_t kBuildBlockCall = 0xf28cd;
+constexpr uintptr_t kBuildBlock = 0xf1ef0;
+constexpr unsigned char kGameBlockMissing[] = {0x8B, 0x44, 0x24, 0x14, 0x89, 0x4C, 0x24, 0x50};
+constexpr size_t kBlockMissingSize = sizeof(kGameBlockMissing);
+
 // Keeps 255 blocks instead of 98, or the wider reach would rebuild them every frame. The count is
 // only ever tested for being equal to the limit, so once it's past 98 this can't go back.
 constexpr Patch kGrassCache = {0xf1c6b, {0x83, 0x7F, 0x68, 0x62}, {0x80, 0x7F, 0x68, 0xFF}, 4};
 
 using GetFovFn = float(__fastcall*)(const void*, void*);
+using BuildBlockFn = void*(__thiscall*)(void*, int, int, void*);
 
 char* g_game = nullptr;
 GetFovFn g_get_fov = nullptr;
 bool g_grass_ready = false;
+void* g_block_built = nullptr;
+void* g_block_skipped = nullptr;
+double g_block_started = 0.0;
 
 bool matches_game(const Patch& patch) { return memcmp(g_game + patch.at, patch.game, patch.size) == 0; }
 
@@ -105,6 +120,45 @@ void fix_glare() {
     void* const ours = &g_glare_call;
     const bool ok = g_get_fov && patch_bytes(g_game + kGlareFovCall, &game, &ours, sizeof(ours));
     logf("detail: sun glare %s", ok ? "narrowed" : "FAILED");
+}
+
+bool __cdecl may_build_block() {
+    if (profile_frame_seconds(ProfileSection::Grass) >= kGrassSecondsPerFrame) return false;
+    g_block_started = now_seconds();
+    return true;
+}
+
+// In place of the two instructions that start building a block. ecx is 0 here.
+__declspec(naked) void block_missing() {
+    __asm {
+        call may_build_block
+        test al, al
+        jz skip
+        mov eax, dword ptr [esp + 0x14]
+        xor ecx, ecx
+        mov dword ptr [esp + 0x50], ecx
+        jmp dword ptr [g_block_built]
+    skip:
+        jmp dword ptr [g_block_skipped]
+    }
+}
+
+void* __fastcall hook_build_block(void* grass, void*, int x, int z, void* list) {
+    void* block = reinterpret_cast<BuildBlockFn>(g_game + kBuildBlock)(grass, x, z, list);
+    profile_grass_block(now_seconds() - g_block_started);
+    return block;
+}
+
+void spread_grass() {
+    g_block_built = g_game + kBlockMissing + kBlockMissingSize;
+    g_block_skipped = g_game + kBlockSkipped;
+    unsigned char jump[kBlockMissingSize] = {0xE9, 0, 0, 0, 0, 0x90, 0x90, 0x90};
+    const auto to = reinterpret_cast<char*>(&block_missing) - (g_game + kBlockMissing + 5);
+    const auto relative = static_cast<int32_t>(to);
+    memcpy(jump + 1, &relative, sizeof(relative));
+    const bool timed = patch_call(g_game + kBuildBlockCall, g_game + kBuildBlock, reinterpret_cast<const void*>(&hook_build_block));
+    const bool spread = timed && patch_bytes(g_game + kBlockMissing, kGameBlockMissing, jump, kBlockMissingSize);
+    logf("detail: grass building spread=%d", spread);
 }
 
 void hook_scale() {
@@ -159,6 +213,7 @@ void detail_attach_game(HMODULE game, bool verified) {
     fix_glare();
     fix_tile_radius();
     check_grass();
+    if (g_grass_ready) spread_grass();
     detail_settings_changed();
 }
 
